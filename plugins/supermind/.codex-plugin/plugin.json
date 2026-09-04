@@ -1,0 +1,25 @@
+{
+  "name": "supermind",
+  "version": "0.1.0",
+  "description": "A smart product-development brain that orchestrates Superpowers.",
+  "author": {
+    "name": "Supermind contributors"
+  },
+  "homepage": "https://github.com/luaxlou/supermind",
+  "repository": "https://github.com/luaxlou/supermind",
+  "keywords": ["product-development", "superpowers", "codex", "agent"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Supermind",
+    "shortDescription": "Smart product development with Superpowers",
+    "longDescription": "Understand product intent, choose the next action, involve the human only for meaningful product decisions, and call the right Superpowers capability at the right time.",
+    "developerName": "Supermind contributors",
+    "category": "Developer Tools",
+    "capabilities": ["Product intent", "Adaptive execution", "Superpowers orchestration"],
+    "defaultPrompt": [
+      "Use Supermind to build this product intent.",
+      "Use Supermind to add this feature.",
+      "Use Supermind to improve this product."
+    ]
+  }
+}

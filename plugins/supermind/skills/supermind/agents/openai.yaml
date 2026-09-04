@@ -1,0 +1,7 @@
+interface:
+  display_name: "Supermind"
+  short_description: "Smart product development with Superpowers"
+  default_prompt: "Use $supermind to turn this product intent into working software."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,20 @@
+{
+  "name": "supermind",
+  "interface": {
+    "displayName": "Supermind"
+  },
+  "plugins": [
+    {
+      "name": "supermind",
+      "source": {
+        "source": "local",
+        "path": "./plugins/supermind"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
