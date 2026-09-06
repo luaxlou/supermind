@@ -43,6 +43,9 @@ class LocalGitHubRunner:
         self.calls: list[tuple[str, ...]] = []
         self.before_next_push = None
         self.reject_pushes = False
+        self.fail_fetches = False
+        self.disconnect_after_rejected_push = False
+        self.fail_commit_tree = False
         self._git = SubprocessCommandRunner()
 
     def run(self, argv, cwd=None):
@@ -68,7 +71,13 @@ class LocalGitHubRunner:
                 callback, self.before_next_push = self.before_next_push, None
                 callback()
             if self.reject_pushes:
+                if self.disconnect_after_rejected_push:
+                    self.fail_fetches = True
                 return CompletedCommand(1, b"", b"non-fast-forward")
+        if call[:2] == ("git", "fetch") and self.fail_fetches:
+            return CompletedCommand(1, b"", b"network unavailable")
+        if "commit-tree" in call and self.fail_commit_tree:
+            return CompletedCommand(1, b"", b"commit failed")
         return self._git.run(call, cwd)
 
 
@@ -308,6 +317,40 @@ def test_online_mutation_publishes_a_pending_commit_before_creating_the_next_eve
     assert report.sync_state is SyncState.SYNCED
 
 
+def test_connectivity_loss_during_pending_reconciliation_continues_offline_without_repush(
+    devices,
+):
+    bare, source, device_a, _ = devices
+    first = _capability_event("login", device="a", source=source)
+    second = _capability_event("upload", device="a", source=source)
+    device_a.runner.online = False
+    first_report = device_a.mutate(first)
+    first_commit = first_report.commit_id
+    device_a.runner.online = True
+    device_a.runner.reject_pushes = True
+    device_a.runner.disconnect_after_rejected_push = True
+    device_a.runner.calls.clear()
+
+    report = device_a.mutate(second)
+
+    assert report.sync_state is SyncState.PENDING_SYNC
+    pushes = [call for call in device_a.runner.calls if call[:2] == ("git", "push")]
+    assert len(pushes) == 1
+    assert _run_git("merge-base", "--is-ancestor", first_commit, report.commit_id,
+                    cwd=device_a.paths.checkout) == b""
+    remote_paths = _run_git(
+        "--git-dir", str(bare), "ls-tree", "-r", "--name-only", "main", "--", "events",
+    ).decode().splitlines()
+    assert remote_paths == []
+
+    device_a.runner.reject_pushes = False
+    device_a.runner.fail_fetches = False
+    assert device_a.sync().sync_state is SyncState.SYNCED
+    assert len(_run_git(
+        "--git-dir", str(bare), "ls-tree", "-r", "--name-only", "main", "--", "events",
+    ).decode().splitlines()) == 2
+
+
 def test_privacy_loss_blocks_before_event_creation(devices):
     _, source, device_a, _ = devices
     device_a.runner.private = False
@@ -398,6 +441,108 @@ def test_invalid_local_event_is_rejected_without_dirtying_checkout(devices):
     assert project_calls == []
     assert len(device_a.renderer.calls) == render_calls
     assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+
+
+def test_invalid_typed_payload_fails_before_append_and_next_mutation_recovers(devices):
+    _, source, device_a, _ = devices
+    valid = _capability_event("login", device="a", source=source)
+    invalid_payload = dict(valid.payload)
+    invalid_payload.pop("name")
+    invalid = AuthorityEvent.create(
+        event_id="invalid-payload",
+        device_id="device-a",
+        entity_type="capability",
+        entity_id="login",
+        operation="registered",
+        parent_event_ids=(),
+        occurred_at="2026-09-06T12:00:00Z",
+        payload=invalid_payload,
+    )
+
+    with pytest.raises(SyncBlocked, match="authority_projection_invalid"):
+        device_a.mutate(invalid)
+
+    assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+    assert device_a.store.load_all() == ()
+    assert device_a.mutate(valid).sync_state is SyncState.SYNCED
+
+
+def test_local_projector_failure_restores_projection_and_next_mutation_recovers(devices):
+    _, source, device_a, _ = devices
+    event = _capability_event("login", device="a", source=source)
+
+    def failing_projector(result, repository, provider):
+        repository.set_metadata("partial-projector-write", True)
+        raise RuntimeError("projector failed")
+
+    device_a.coordinator.projector = failing_projector
+    with pytest.raises(SyncBlocked, match="projection_failed"):
+        device_a.mutate(event)
+
+    assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+    assert device_a.store.load_all() == ()
+    assert device_a.repository.get_metadata("partial-projector-write") is None
+    device_a.coordinator.projector = project_authority
+    assert device_a.mutate(event).sync_state is SyncState.SYNCED
+
+
+def test_embedding_failure_leaves_authority_and_projection_unchanged_then_recovers(devices):
+    _, source, device_a, _ = devices
+    event = _capability_event("login", device="a", source=source)
+    healthy_embeddings = device_a.coordinator.embeddings
+
+    class FailingEmbeddings:
+        def embed_query(self, text):
+            raise RuntimeError("embedding failed")
+
+        def embed_documents(self, texts):
+            raise RuntimeError("embedding failed")
+
+    device_a.coordinator.embeddings = FailingEmbeddings()
+    with pytest.raises(SyncBlocked, match="projection_failed"):
+        device_a.mutate(event)
+
+    assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+    assert device_a.store.load_all() == ()
+    assert device_a.repository.list_capabilities() == ()
+    device_a.coordinator.embeddings = healthy_embeddings
+    assert device_a.mutate(event).sync_state is SyncState.SYNCED
+
+
+def test_local_renderer_partial_failure_never_touches_live_checkout_and_recovers(devices):
+    _, source, device_a, _ = devices
+    event = _capability_event("login", device="a", source=source)
+    healthy_renderer = device_a.renderer
+
+    class PartialRenderer:
+        def render(self, result, checkout):
+            (checkout / "partial-render.md").write_text("partial\n")
+            raise RuntimeError("renderer failed")
+
+    device_a.coordinator.renderer = PartialRenderer()
+    with pytest.raises(SyncBlocked, match="render_failed"):
+        device_a.mutate(event)
+
+    assert not (device_a.paths.checkout / "partial-render.md").exists()
+    assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+    assert device_a.store.load_all() == ()
+    device_a.coordinator.renderer = healthy_renderer
+    assert device_a.mutate(event).sync_state is SyncState.SYNCED
+
+
+def test_git_commit_failure_restores_index_authority_projection_and_next_mutation(devices):
+    _, source, device_a, _ = devices
+    event = _capability_event("login", device="a", source=source)
+    device_a.runner.fail_commit_tree = True
+
+    with pytest.raises(SyncBlocked, match="materialization_failed"):
+        device_a.mutate(event)
+
+    assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+    assert device_a.store.load_all() == ()
+    assert device_a.repository.list_capabilities() == ()
+    device_a.runner.fail_commit_tree = False
+    assert device_a.mutate(event).sync_state is SyncState.SYNCED
 
 
 def _commit_remote_event(bare: Path, worktree: Path, event: AuthorityEvent) -> None:
@@ -549,6 +694,110 @@ def test_missing_parent_in_remote_union_blocks_without_dirtying_checkout(devices
     assert project_calls == []
     assert len(device_a.renderer.calls) == render_calls
     assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+
+
+def test_remote_projector_failure_restores_checkout_projection_and_next_sync_recovers(
+    devices, tmp_path,
+):
+    bare, source, device_a, _ = devices
+    event = _capability_event("login", device="remote", source=source)
+    _commit_remote_event(bare, tmp_path / "remote-projector", event)
+
+    def failing_projector(result, repository, provider):
+        repository.set_metadata("partial-projector-write", True)
+        raise RuntimeError("projector failed")
+
+    device_a.coordinator.projector = failing_projector
+    with pytest.raises(SyncBlocked, match="projection_failed"):
+        device_a.sync()
+
+    assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+    assert device_a.store.load_all() == ()
+    assert device_a.repository.get_metadata("partial-projector-write") is None
+    device_a.coordinator.projector = project_authority
+    assert device_a.sync().sync_state is SyncState.SYNCED
+    assert device_a.store.load_all() == (event,)
+
+
+def test_invalid_remote_typed_payload_remains_visible_as_corruption_without_dirtying_local(
+    devices, tmp_path,
+):
+    bare, source, device_a, _ = devices
+    valid = _capability_event("login", device="remote", source=source)
+    invalid_payload = dict(valid.payload)
+    invalid_payload.pop("name")
+    invalid = AuthorityEvent.create(
+        event_id="invalid-remote-payload",
+        device_id="device-remote",
+        entity_type="capability",
+        entity_id="login",
+        operation="registered",
+        parent_event_ids=(),
+        occurred_at="2026-09-06T12:00:00Z",
+        payload=invalid_payload,
+    )
+    _commit_remote_event(bare, tmp_path / "remote-invalid-payload", invalid)
+
+    for _ in range(2):
+        with pytest.raises(SyncBlocked, match="authority_projection_invalid"):
+            device_a.sync()
+        assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+        assert device_a.store.load_all() == ()
+
+
+def test_remote_renderer_partial_failure_never_touches_live_checkout_and_next_sync_recovers(
+    devices, tmp_path,
+):
+    bare, source, device_a, _ = devices
+    event = _capability_event("login", device="remote", source=source)
+    _commit_remote_event(bare, tmp_path / "remote-renderer", event)
+    healthy_renderer = device_a.renderer
+
+    class PartialRenderer:
+        def render(self, result, checkout):
+            (checkout / "partial-render.md").write_text("partial\n")
+            raise RuntimeError("renderer failed")
+
+    device_a.coordinator.renderer = PartialRenderer()
+    with pytest.raises(SyncBlocked, match="render_failed"):
+        device_a.sync()
+
+    assert not (device_a.paths.checkout / "partial-render.md").exists()
+    assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+    assert device_a.store.load_all() == ()
+    device_a.coordinator.renderer = healthy_renderer
+    assert device_a.sync().sync_state is SyncState.SYNCED
+    assert device_a.store.load_all() == (event,)
+
+
+def test_replaced_memory_root_blocks_before_creating_an_outside_lock_or_event(devices):
+    _, source, device_a, _ = devices
+    original_config = device_a.paths.config.read_bytes()
+    outside_root = device_a.paths.root.parent / "outside-memory"
+    device_a.paths.root.rename(outside_root)
+    device_a.paths.root.symlink_to(outside_root, target_is_directory=True)
+
+    with pytest.raises(SyncBlocked, match="repository_paths_invalid"):
+        device_a.mutate(_capability_event("login", device="a", source=source))
+
+    assert not (outside_root / "locks" / "sync.lock").exists()
+    assert (outside_root / "config.json").read_bytes() == original_config
+    assert EventStore(outside_root / "repository").load_all() == ()
+
+
+def test_replaced_locks_directory_blocks_before_creating_an_outside_lock_or_event(devices):
+    _, source, device_a, _ = devices
+    original_config = device_a.paths.config.read_bytes()
+    outside_locks = device_a.paths.root.parent / "outside-locks"
+    device_a.paths.locks.rename(outside_locks)
+    device_a.paths.locks.symlink_to(outside_locks, target_is_directory=True)
+
+    with pytest.raises(SyncBlocked, match="repository_paths_invalid"):
+        device_a.mutate(_capability_event("login", device="a", source=source))
+
+    assert not (outside_locks / "sync.lock").exists()
+    assert device_a.paths.config.read_bytes() == original_config
+    assert device_a.store.load_all() == ()
 
 
 def test_local_sibling_event_is_stored_as_conflict_but_not_pushed_as_success(devices):

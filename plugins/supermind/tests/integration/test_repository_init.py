@@ -57,6 +57,7 @@ class LocalGitHubRunner:
         private: bool = True,
         writable: bool = True,
         branch: str | None = "main",
+        rest_branch: str | None = None,
     ) -> None:
         self.bare_repository = bare_repository
         self.repository_id = repository_id
@@ -64,6 +65,7 @@ class LocalGitHubRunner:
         self.private = private
         self.writable = writable
         self.branch = branch
+        self.rest_branch = branch if rest_branch is None else rest_branch
         self.calls: list[tuple[str, ...]] = []
         self._git = SubprocessCommandRunner()
 
@@ -83,6 +85,9 @@ class LocalGitHubRunner:
             }
             return CompletedCommand(0, json.dumps(metadata).encode(), b"")
         if call[:2] == ("gh", "api"):
+            if call[-1] == ".default_branch":
+                value = self.rest_branch or ""
+                return CompletedCommand(0, f"{value}\n".encode(), b"")
             return CompletedCommand(0, b"true\n" if self.writable else b"false\n", b"")
         return self._git.run(call, cwd)
 
@@ -168,6 +173,32 @@ def test_connect_initializes_a_genuinely_empty_remote_and_writes_private_config(
     )
     assert RepositoryConfig.read(paths.config) == config
     assert paths.checkout.is_dir()
+
+
+def test_connect_empty_uses_rest_default_branch_when_no_ref_exists(tmp_path):
+    bare = _bare_repository(tmp_path)
+    runner = LocalGitHubRunner(bare, branch=None, rest_branch="main")
+    paths = MemoryPaths.from_codex_home(tmp_path / "data-home")
+
+    config = initialize_repository(_request(runner), paths)
+
+    assert config.branch == "main"
+    assert ("gh", "api", "repos/owner/memory", "--jq", ".default_branch") in runner.calls
+    assert _run_git("--git-dir", str(bare), "show", "main:memory.json") == _marker()
+
+
+def test_create_private_empty_uses_rest_default_branch_when_no_ref_exists(tmp_path):
+    bare = _bare_repository(tmp_path)
+    runner = LocalGitHubRunner(bare, branch=None, rest_branch="main")
+    paths = MemoryPaths.from_codex_home(tmp_path / "data-home")
+
+    config = initialize_repository(_request(runner, create_private=True), paths)
+
+    assert config.branch == "main"
+    assert runner.calls[0] == (
+        "gh", "repo", "create", "owner/memory", "--private", "--confirm",
+    )
+    assert ("gh", "api", "repos/owner/memory", "--jq", ".default_branch") in runner.calls
 
 
 def test_create_uses_private_flag_then_independently_checks_metadata_and_access(tmp_path):

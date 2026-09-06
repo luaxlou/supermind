@@ -355,6 +355,13 @@ class GitClient:
         self._redacted_attempts.append(f"git_push_failed: {_diagnostic(result)}")
         return False
 
+    def reset_index(self, checkout: Path) -> None:
+        """Reset staging to HEAD without changing or deleting working-tree files."""
+        _require_success(
+            self._runner.run(("git", "reset", "--mixed", "HEAD", "--", "."), cwd=checkout),
+            "git_index_reset_failed",
+        )
+
 
 def _lines(raw: bytes) -> tuple[str, ...]:
     try:
@@ -395,6 +402,17 @@ class GitHubClient:
             raise RepositoryInitBlocked("repository_not_writable")
         branch_ref = metadata.get("defaultBranchRef")
         branch = branch_ref.get("name") if isinstance(branch_ref, dict) else None
+        if branch is None:
+            branch_result = _require_success(
+                self._runner.run((
+                    "gh", "api", f"repos/{repository}", "--jq", ".default_branch",
+                )),
+                "repository_default_branch_check_failed",
+            )
+            try:
+                branch = branch_result.stdout.decode("utf-8", errors="strict").strip()
+            except UnicodeDecodeError as error:
+                raise RepositoryInitBlocked("repository_branch_ambiguous") from error
         if not isinstance(branch, str) or not _BRANCH.fullmatch(branch):
             raise RepositoryInitBlocked("repository_branch_ambiguous")
         repository_id = metadata.get("id")
@@ -431,7 +449,7 @@ class GitHubClient:
 
 
 def initialize_repository(request: InitRequest, paths: MemoryPaths) -> RepositoryConfig:
-    _validate_memory_paths(paths)
+    validate_memory_paths(paths)
     runner = request.runner or SubprocessCommandRunner()
     github = GitHubClient(runner)
     repository = (
@@ -509,7 +527,7 @@ def _validate_attached_checkout(
     _validate_checkout_identity(git, checkout, repository)
 
 
-def _validate_memory_paths(paths: MemoryPaths) -> None:
+def validate_memory_paths(paths: MemoryPaths) -> None:
     root = paths.root.absolute()
     expected = {
         "config": root / "config.json",
@@ -525,8 +543,22 @@ def _validate_memory_paths(paths: MemoryPaths) -> None:
     for name, expected_path in expected.items():
         if getattr(paths, name).absolute() != expected_path:
             raise RepositoryInitBlocked("repository_paths_invalid")
-    parent = root.parent
-    if parent.exists() and (parent.is_symlink() or parent.resolve() != parent):
+    owned_directories = {
+        root.parent,
+        root,
+        paths.checkout,
+        paths.database.parent,
+        paths.database,
+        paths.model_cache,
+        paths.locks,
+        paths.generations,
+        paths.runtime,
+    }
+    for path in owned_directories:
+        if path.exists() or path.is_symlink():
+            if path.is_symlink() or not path.is_dir() or path.resolve() != path.absolute():
+                raise RepositoryInitBlocked("repository_paths_invalid")
+    if paths.config.is_symlink():
         raise RepositoryInitBlocked("repository_paths_invalid")
 
 

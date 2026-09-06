@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import stat
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import Enum
@@ -20,8 +24,9 @@ from supermind_memory.git_client import (
     GitClient,
     GitHubClient,
     RepositoryInitBlocked,
+    validate_memory_paths,
 )
-from supermind_memory.projection import compare_projection, project_authority
+from supermind_memory.projection import authority_snapshot, compare_projection, project_authority
 from supermind_memory.replay import ReplayError, ReplayResult, replay
 from supermind_memory.repository import CapabilityRepository
 from supermind_memory.redaction import redact_text
@@ -47,6 +52,12 @@ class SyncReport:
     event_set_digest: str
     remote_head: str | None
     conflicts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _FileImage:
+    payload: bytes
+    mode: int
 
 
 class SyncBlocked(RuntimeError):
@@ -88,6 +99,7 @@ class SyncCoordinator:
         self._operation_lock = paths.locks / "sync.lock"
 
     def mutate(self, create_event: Callable[[ReplayResult], AuthorityEvent]) -> SyncReport:
+        self._validate_owned_paths()
         with FileLock(str(self._operation_lock), timeout=30):
             current = self._validate_local_checkout()
             online = self._validate_remote_metadata()
@@ -97,9 +109,10 @@ class SyncCoordinator:
             else:
                 self._require_healthy_projection(current)
                 return self._commit_mutation(current, create_event, online=False)
-            return self._commit_mutation(current, create_event, online=True)
+            return self._commit_mutation(current, create_event, online=online)
 
     def synchronize(self) -> SyncReport:
+        self._validate_owned_paths()
         with FileLock(str(self._operation_lock), timeout=30):
             current = self._validate_local_checkout()
             online = self._validate_remote_metadata()
@@ -117,6 +130,12 @@ class SyncCoordinator:
                 )
             result = replay(self.store.load_all())
             return self._report(SyncState.SYNCED, result, self.git.head(self.paths.checkout))
+
+    def _validate_owned_paths(self) -> None:
+        try:
+            validate_memory_paths(self.paths)
+        except RepositoryInitBlocked as error:
+            raise SyncBlocked("repository_paths_invalid", (str(error),)) from error
 
     def _validate_local_checkout(self) -> ReplayResult:
         if self.paths.config.is_symlink():
@@ -188,12 +207,12 @@ class SyncCoordinator:
             if local_head == remote_head:
                 self._record_remote_head(remote_head)
                 return True
-            result = self._merge_remote_events(remote_ref)
-            self.projector(result, self.repository, self.embeddings)
-            self.renderer.render(result, self.paths.checkout)
-            commit_id = self.git.commit_all(
-                self.paths.checkout,
-                self.config.branch,
+            previous = replay(self.store.load_all())
+            result, incoming = self._merge_remote_events(remote_ref)
+            commit_id = self._materialize_commit(
+                previous,
+                result,
+                incoming,
                 remote_head,
                 "Synchronize Supermind memory events",
             )
@@ -211,7 +230,9 @@ class SyncCoordinator:
                 return False
         raise SyncBlocked("push_retry_exhausted", self.git.redacted_attempts)
 
-    def _merge_remote_events(self, remote_ref: str) -> ReplayResult:
+    def _merge_remote_events(
+        self, remote_ref: str,
+    ) -> tuple[ReplayResult, tuple[AuthorityEvent, ...]]:
         try:
             marker_entries = self.git.tree_entries(
                 self.paths.checkout, remote_ref, "memory.json",
@@ -267,12 +288,7 @@ class SyncCoordinator:
             result = replay((*local_events, *incoming))
         except ReplayError as error:
             raise SyncBlocked("authority_corrupt", (str(error),)) from error
-        try:
-            for event in incoming:
-                self.store.append(event)
-        except (EventStoreError, OSError) as error:
-            raise SyncBlocked("authority_corrupt", (str(error),)) from error
-        return result
+        return result, tuple(incoming)
 
     def _commit_mutation(
         self,
@@ -288,17 +304,15 @@ class SyncCoordinator:
             raise SyncBlocked("authority_event_invalid")
         try:
             result = replay((*self.store.load_all(), event))
-            self.store.append(event)
-        except (EventStoreError, OSError, ReplayError) as error:
+        except (EventStoreError, ReplayError) as error:
             raise SyncBlocked("authority_corrupt", (str(error),)) from error
-        self.projector(result, self.repository, self.embeddings)
-        self.renderer.render(result, self.paths.checkout)
         remote_head = self.config.last_checked_remote_head
         if remote_head is None:
             raise SyncBlocked("repository_remote_head_missing")
-        commit_id = self.git.commit_all(
-            self.paths.checkout,
-            self.config.branch,
+        commit_id = self._materialize_commit(
+            current,
+            result,
+            (event,),
             remote_head,
             f"Record Supermind memory event {event.event_id}",
         )
@@ -318,12 +332,12 @@ class SyncCoordinator:
             remote_ref = f"refs/remotes/origin/{self.config.branch}"
             remote_head = self.git.ref_head(self.paths.checkout, remote_ref)
             self._record_remote_head(remote_head)
-            result = self._merge_remote_events(remote_ref)
-            self.projector(result, self.repository, self.embeddings)
-            self.renderer.render(result, self.paths.checkout)
-            commit_id = self.git.commit_all(
-                self.paths.checkout,
-                self.config.branch,
+            previous = replay(self.store.load_all())
+            result, incoming = self._merge_remote_events(remote_ref)
+            commit_id = self._materialize_commit(
+                previous,
+                result,
+                incoming,
                 remote_head,
                 f"Reconcile Supermind memory event {event.event_id}",
             )
@@ -335,7 +349,148 @@ class SyncCoordinator:
             report = self._report(SyncState.COMMITTED, result, commit_id)
         raise SyncBlocked("push_retry_exhausted", self.git.redacted_attempts)
 
+    def _materialize_commit(
+        self,
+        previous: ReplayResult,
+        result: ReplayResult,
+        additions: tuple[AuthorityEvent, ...],
+        remote_head: str,
+        message: str,
+    ) -> str:
+        self._preflight_projection(result)
+        render_changes = self._stage_render(result, additions)
+        self._validate_owned_paths()
+        render_before = self._live_images(render_changes)
+        event_paths = tuple(self._event_path(event) for event in additions)
+        event_existed = tuple(path.exists() for path in event_paths)
+        try:
+            self.projector(result, self.repository, self.embeddings)
+        except Exception as error:
+            self._restore_projection(previous, error)
+            raise SyncBlocked("projection_failed", (str(error),)) from error
+        try:
+            for event in additions:
+                self.store.append(event)
+            self._apply_images(render_changes)
+            return self.git.commit_all(
+                self.paths.checkout,
+                self.config.branch,
+                remote_head,
+                message,
+            )
+        except Exception as error:
+            recovery_errors: list[str] = []
+            try:
+                self._restore_images(render_before)
+            except Exception as recovery_error:
+                recovery_errors.append(str(recovery_error))
+            for path, existed in zip(event_paths, event_existed, strict=True):
+                if not existed:
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError as recovery_error:
+                        recovery_errors.append(str(recovery_error))
+            try:
+                self.git.reset_index(self.paths.checkout)
+            except Exception as recovery_error:
+                recovery_errors.append(str(recovery_error))
+            try:
+                self._restore_projection(previous, error)
+            except Exception as recovery_error:
+                recovery_errors.append(str(recovery_error))
+            if recovery_errors:
+                raise SyncBlocked(
+                    "materialization_recovery_failed",
+                    (str(error), *recovery_errors),
+                ) from error
+            raise SyncBlocked("materialization_failed", (str(error),)) from error
+
+    def _preflight_projection(self, result: ReplayResult) -> None:
+        try:
+            authority_snapshot(
+                result.entities,
+                conflicts=result.conflicts,
+                diagnostic_ancestors=result.diagnostic_ancestors,
+                event_set_digest=result.digest,
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise SyncBlocked("authority_projection_invalid", (str(error),)) from error
+
+    def _stage_render(
+        self,
+        result: ReplayResult,
+        additions: tuple[AuthorityEvent, ...],
+    ) -> dict[str, _FileImage | None]:
+        self._validate_owned_paths()
+        with tempfile.TemporaryDirectory(prefix=".sync-stage-", dir=self.paths.root) as temporary:
+            stage = Path(temporary) / "repository"
+
+            def ignore_git(directory: str, names: list[str]) -> set[str]:
+                return {".git"} if Path(directory) == self.paths.checkout else set()
+
+            shutil.copytree(
+                self.paths.checkout,
+                stage,
+                symlinks=True,
+                ignore=ignore_git,
+            )
+            for event in additions:
+                EventStore(stage).append(event)
+            before = _snapshot_files(stage)
+            try:
+                self.renderer.render(result, stage)
+            except Exception as error:
+                raise SyncBlocked("render_failed", (str(error),)) from error
+            after = _snapshot_files(stage)
+            authority_paths = {
+                path for path in before.keys() | after.keys() if _is_authority_path(path)
+            }
+            if any(before.get(path) != after.get(path) for path in authority_paths):
+                raise SyncBlocked("renderer_modified_authority", tuple(sorted(authority_paths)))
+            return {
+                path: after.get(path)
+                for path in sorted(before.keys() | after.keys())
+                if not _is_authority_path(path) and before.get(path) != after.get(path)
+            }
+
+    def _live_images(
+        self, changes: dict[str, _FileImage | None],
+    ) -> dict[str, _FileImage | None]:
+        images: dict[str, _FileImage | None] = {}
+        for relative in changes:
+            target = self.paths.checkout / relative
+            if target.is_symlink():
+                raise SyncBlocked("repository_symlink_unsafe", (relative,))
+            images[relative] = _read_image(target) if target.exists() else None
+        return images
+
+    def _apply_images(self, images: dict[str, _FileImage | None]) -> None:
+        for relative, image in images.items():
+            _apply_image(self.paths.checkout, relative, image)
+
+    def _restore_images(self, images: dict[str, _FileImage | None]) -> None:
+        for relative, image in images.items():
+            _apply_image(self.paths.checkout, relative, image)
+
+    def _restore_projection(self, previous: ReplayResult, original: Exception) -> None:
+        try:
+            if not compare_projection(previous, self.repository).equivalent:
+                project_authority(previous, self.repository, self.embeddings)
+            if not compare_projection(previous, self.repository).equivalent:
+                raise RuntimeError("restored projection does not match prior event set")
+        except Exception as recovery_error:
+            raise SyncBlocked(
+                "projection_recovery_failed",
+                (str(original), str(recovery_error)),
+            ) from original
+
+    def _event_path(self, event: AuthorityEvent) -> Path:
+        return self.paths.checkout / Path(
+            "events", "v1", event.device_id, event.occurred_at[:7], f"{event.event_id}.json",
+        )
+
     def _record_remote_head(self, remote_head: str) -> None:
+        self._validate_owned_paths()
         self.config = replace(self.config, last_checked_remote_head=remote_head)
         self.config.write(self.paths.config)
 
@@ -354,3 +509,72 @@ class SyncCoordinator:
                 f"{item.entity_type}/{item.entity_id}" for item in result.conflicts
             ),
         )
+
+
+def _snapshot_files(root: Path) -> dict[str, _FileImage]:
+    images: dict[str, _FileImage] = {}
+    for directory, directories, filenames in os.walk(root, followlinks=False):
+        base = Path(directory)
+        for name in directories:
+            path = base / name
+            if path.is_symlink():
+                raise SyncBlocked(
+                    "repository_symlink_unsafe",
+                    (path.relative_to(root).as_posix(),),
+                )
+        for name in filenames:
+            path = base / name
+            relative = path.relative_to(root).as_posix()
+            images[relative] = _read_image(path)
+    return images
+
+
+def _read_image(path: Path) -> _FileImage:
+    details = path.lstat()
+    if not stat.S_ISREG(details.st_mode):
+        raise SyncBlocked("repository_symlink_unsafe", (str(path),))
+    return _FileImage(path.read_bytes(), stat.S_IMODE(details.st_mode))
+
+
+def _is_authority_path(relative: str) -> bool:
+    parts = Path(relative).parts
+    return relative == "memory.json" or bool(parts and parts[0] == "events")
+
+
+def _apply_image(root: Path, relative: str, image: _FileImage | None) -> None:
+    path = Path(relative)
+    if path.is_absolute() or not path.parts or ".." in path.parts:
+        raise SyncBlocked("render_path_invalid", (relative,))
+    parent = root
+    for part in path.parts[:-1]:
+        parent /= part
+        if parent.exists() or parent.is_symlink():
+            if parent.is_symlink() or not parent.is_dir():
+                raise SyncBlocked("repository_symlink_unsafe", (relative,))
+        else:
+            parent.mkdir(mode=0o755)
+    target = root / path
+    if target.is_symlink():
+        raise SyncBlocked("repository_symlink_unsafe", (relative,))
+    if image is None:
+        target.unlink(missing_ok=True)
+        return
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, image.mode)
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(image.payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+        directory = os.open(target.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)

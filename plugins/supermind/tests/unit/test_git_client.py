@@ -39,6 +39,18 @@ def test_git_fetch_uses_an_argument_vector_without_shell_text(tmp_path):
     assert runner.shell_was_used is False
 
 
+def test_git_index_reset_preserves_worktree_through_an_argument_vector(tmp_path):
+    runner = RecordingRunner()
+    checkout = tmp_path / "memory checkout"
+
+    GitClient(runner).reset_index(checkout)
+
+    assert runner.calls == [
+        (("git", "reset", "--mixed", "HEAD", "--", "."), checkout),
+    ]
+    assert runner.shell_was_used is False
+
+
 def test_subprocess_runner_disables_shell_and_preserves_captured_bytes(monkeypatch, tmp_path):
     seen = {}
 
