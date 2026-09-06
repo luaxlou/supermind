@@ -55,7 +55,7 @@ def projects(tmp_path: Path) -> Projects:
 
 
 @pytest.fixture
-def memory(tmp_path: Path, embeddings) -> CapabilityMemory:
+def memory(tmp_path: Path, embeddings, event_transactions) -> CapabilityMemory:
     codex_home = tmp_path / "codex"
     paths = MemoryPaths.from_codex_home(codex_home)
     repository = CapabilityRepository.open(
@@ -63,7 +63,10 @@ def memory(tmp_path: Path, embeddings) -> CapabilityMemory:
         writer_lock_path=paths.locks / "writer.lock",
     )
     repository.initialize()
-    health = HealthManager(paths, repository, embeddings)
+    coordinator = event_transactions(paths, repository, embeddings)
+    from supermind_memory.replay import replay
+    health = HealthManager(paths, repository, embeddings, authority_mode="events-v1",
+                           expected_authority_digest=replay(()).digest)
     service = CapabilityMemory(
         bootstrap=Bootstrap(paths, repository, embeddings, health_manager=health),
         discovery=CapabilityDiscovery(SourceRegistry(repository)),
@@ -72,6 +75,7 @@ def memory(tmp_path: Path, embeddings) -> CapabilityMemory:
         embedding_provider=embeddings,
         health_manager=health,
         codex_home=codex_home,
+        sync_coordinator=coordinator,
     )
     yield service
     service.close()
@@ -259,14 +263,16 @@ def test_hardened_login_reuse_preserves_proof_repair_secrets_and_demand_history(
         )
         assert registered is not None
         assert registered.lifecycle is Lifecycle.VERIFIED
-    memory.repository.append_evidence(replace(
+    relationship_evidence = replace(
         _verification("relationship-project", capability_id=complete.id),
         id="failed-relationship-proof", evidence_type="integration", outcome="failed",
-    ))
-    memory.repository.append_relationship(Relationship(
+    )
+    memory._commit_event("evidence", relationship_evidence.id, "observed", asdict(relationship_evidence))
+    relationship = Relationship(
         id="failed-login-relation", source_id=complete.id, target_id=related.id,
         relationship_type="dependency", compatibility=(), evidence_ids=("failed-relationship-proof",),
-    ))
+    )
+    memory._commit_event("relationship", relationship.id, "declared", asdict(relationship))
 
     hybrid = memory.repository.hybrid_search
     rebuild = memory.health_manager.rebuild_indexes
@@ -277,7 +283,7 @@ def test_hardened_login_reuse_preserves_proof_repair_secrets_and_demand_history(
         routes = hybrid(**kwargs)
         routes_seen.append(kwargs["generation"])
         if len(routes_seen) <= 2:
-            memory.repository.set_metadata("e2e-authority-change", len(routes_seen))
+            memory._commit_event("metadata", "e2e-authority-change", "set", {"value": len(routes_seen)})
         if len(routes_seen) == 3:
             raise RuntimeError("injected complete hybrid failure")
         # Keep real retrieval; isolate expansion by omitting this candidate
@@ -303,7 +309,9 @@ def test_hardened_login_reuse_preserves_proof_repair_secrets_and_demand_history(
     assert matches[incomplete.id].requirement_fit > matches[complete.id].requirement_fit
     assert related.id not in matches
     assert len(routes_seen) == 4
-    assert routes_seen[0] == routes_seen[1] == routes_seen[2]
+    # Each committed authority projection rebuilds its derived generation.
+    # Those consistency restarts must not consume the one retrieval repair.
+    assert len(set(routes_seen[:3])) == 3
     assert repairs == [decision.search_result.generation]
     assert routes_seen[3] == repairs[0] != routes_seen[2]
 
@@ -338,7 +346,7 @@ def test_hardened_login_reuse_preserves_proof_repair_secrets_and_demand_history(
     decisions = []
     for reference in (str(source), source.as_uri()):
         stored = memory.get(complete.id)
-        memory.repository.upsert_capability(replace(stored, source_uri=reference), [0.0] * 384)
+        memory._commit_event("capability", stored.id, "updated", asdict(replace(stored, source_uri=reference)))
         outcome = workflow.begin_design(projects.c, wanted)
         decisions.append((outcome.action, outcome.selected_capability_id))
     assert decisions == [("reuse", complete.id), ("reuse", complete.id)]

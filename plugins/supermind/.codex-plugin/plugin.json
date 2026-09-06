@@ -1,6 +1,6 @@
 {
   "name": "supermind",
-  "version": "0.1.0+codex.local-20260904-163752",
+  "version": "0.2.0",
   "description": "Product development with automatic, evidence-backed capability reuse.",
   "author": {
     "name": "Supermind contributors"
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "Supermind",
     "shortDescription": "Product development with automatic reuse",
-    "longDescription": "Turn product intent into working software while automatically discovering and evaluating verified capabilities. Exact contract matches are reused, partial matches are adapted, and incompatible high-similarity results are rejected. Inspect the local evidence-backed library as readable catalogs, detail cards, decisions, and relationship graphs.",
+    "longDescription": "Turn product intent into working software while automatically discovering and evaluating verified capabilities. A standalone local Python CLI records immutable memory events and synchronizes incremental commits with your private GitHub repository. Browse the categorized, collapsible README, capability cards, and relationship graphs. Models and vectors stay local; no resident service is required.",
     "developerName": "Supermind contributors",
     "category": "Developer Tools",
     "capabilities": [
@@ -27,6 +27,7 @@
       "Automatic capability reuse",
       "Evidence-backed decisions",
       "Capability Explorer",
+      "Private repository memory sync",
       "Adaptive execution"
     ],
     "defaultPrompt": [

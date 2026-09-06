@@ -139,7 +139,24 @@ def authority_snapshot(
         for item in sorted(conflicts, key=lambda item: (item.entity_type, item.entity_id))
     ]
     metadata[AUTHORITATIVE_SCHEMA_VERSION_KEY] = SCHEMA_VERSION
-    evidence_ids = sorted(item.id for item in records["evidence"])
+    evidence_by_id = {item.id: item for item in records["evidence"]}
+    evidence_ids = []
+    for key, value in sorted(metadata.items()):
+        if not key.startswith("evidence-order-"):
+            continue
+        if not isinstance(value, dict) or set(value) != {"capability_id", "evidence_ids"}:
+            raise ValueError("invalid evidence order metadata")
+        identifiers = value["evidence_ids"]
+        if not isinstance(identifiers, list) or any(not isinstance(item, str) for item in identifiers):
+            raise ValueError("invalid evidence order identifiers")
+        for identifier in identifiers:
+            item = evidence_by_id.get(identifier)
+            if item is None:
+                continue
+            if item.capability_id != value["capability_id"] or identifier in evidence_ids:
+                raise ValueError("evidence order does not match capability")
+            evidence_ids.append(identifier)
+    evidence_ids.extend(sorted(set(evidence_by_id) - set(evidence_ids)))
     metadata[_EVIDENCE_ORDER_KEY] = {"next": len(evidence_ids) + 1,
                                       "sequences": {identifier: index for index, identifier in enumerate(evidence_ids, 1)}}
     return AuthoritySnapshot(
@@ -225,8 +242,19 @@ def compare_projection(result: ReplayResult, repository: CapabilityRepository) -
 
 def project_authority(result: ReplayResult, repository: CapabilityRepository, embeddings: EmbeddingProvider) -> ProjectionDigest:
     snapshot = _snapshot(result)
-    vectors = {item.id: embeddings.embed_query(str(repository._capability_row(item, [0.0] * EMBEDDING_DIMENSION)["search_text"]))
-               for item in snapshot.capabilities}
+    documents = [str(repository._capability_row(item, [0.0] * EMBEDDING_DIMENSION)["search_text"])
+                 for item in snapshot.capabilities]
+    from supermind_memory.redaction import redact_text
+    failure = None
+    try:
+        embedded = embeddings.embed_documents(documents) if documents else []
+        if len(embedded) != len(documents):
+            raise ValueError("embedding provider returned the wrong document count")
+    except Exception as error:
+        failure = ProjectionBlocked("embedding_unavailable", (redact_text(str(error)),))
+    if failure is not None:
+        raise failure from None
+    vectors = {item.id: vector for item, vector in zip(snapshot.capabilities, embedded, strict=True)}
     repository.replace_authority(snapshot, vectors)
     comparison = compare_projection(result, repository)
     if not comparison.equivalent:

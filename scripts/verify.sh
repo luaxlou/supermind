@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+case "${1:-}" in
+  "") run_tests=1 ;;
+  --structure-only) run_tests=0 ;;
+  *) echo "Usage: scripts/verify.sh [--structure-only]" >&2; exit 2 ;;
+esac
+
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 plugin_root="$project_root/plugins/supermind"
+memory_root="$project_root/capability-memory"
 skill_root="$plugin_root/skills/supermind"
 validator_python="${CODEX_PYTHON:-python3}"
 validator=("$validator_python")
@@ -25,56 +32,88 @@ fi
 expected_files='.agents/plugins/marketplace.json
 .gitignore
 README.md
+capability-memory/evaluation/retrieval-v1.json
+capability-memory/model.lock.json
+capability-memory/pyproject.toml
+capability-memory/requirements.lock
+capability-memory/schemas/v1/event.schema.json
+capability-memory/schemas/v1/memory.schema.json
+capability-memory/src/supermind_memory/__init__.py
+capability-memory/src/supermind_memory/bootstrap.py
+capability-memory/src/supermind_memory/cli.py
+capability-memory/src/supermind_memory/compatibility.py
+capability-memory/src/supermind_memory/config.py
+capability-memory/src/supermind_memory/decision.py
+capability-memory/src/supermind_memory/discovery.py
+capability-memory/src/supermind_memory/embeddings.py
+capability-memory/src/supermind_memory/event_model.py
+capability-memory/src/supermind_memory/event_store.py
+capability-memory/src/supermind_memory/explorer.py
+capability-memory/src/supermind_memory/git_client.py
+capability-memory/src/supermind_memory/health.py
+capability-memory/src/supermind_memory/lifecycle.py
+capability-memory/src/supermind_memory/migration.py
+capability-memory/src/supermind_memory/projection.py
+capability-memory/src/supermind_memory/protocol.py
+capability-memory/src/supermind_memory/redaction.py
+capability-memory/src/supermind_memory/renderer.py
+capability-memory/src/supermind_memory/replay.py
+capability-memory/src/supermind_memory/repository.py
+capability-memory/src/supermind_memory/resources.py
+capability-memory/src/supermind_memory/retrieval_evaluation.py
+capability-memory/src/supermind_memory/schema.py
+capability-memory/src/supermind_memory/scoring.py
+capability-memory/src/supermind_memory/search.py
+capability-memory/src/supermind_memory/service.py
+capability-memory/src/supermind_memory/source_resolution.py
+capability-memory/src/supermind_memory/sync.py
+capability-memory/src/supermind_memory/taxonomy.py
+capability-memory/src/supermind_memory/types.py
+capability-memory/src/supermind_memory/workflow.py
+capability-memory/tests/conftest.py
+capability-memory/tests/e2e/test_distributed_bootstrap.py
+capability-memory/tests/e2e/test_login_reuse.py
+capability-memory/tests/e2e/test_no_daemon.py
+capability-memory/tests/integration/test_cli.py
+capability-memory/tests/integration/test_discovery.py
+capability-memory/tests/integration/test_event_first_service.py
+capability-memory/tests/integration/test_explorer.py
+capability-memory/tests/integration/test_health.py
+capability-memory/tests/integration/test_migration.py
+capability-memory/tests/integration/test_projection.py
+capability-memory/tests/integration/test_render_repository.py
+capability-memory/tests/integration/test_repository.py
+capability-memory/tests/integration/test_repository_init.py
+capability-memory/tests/integration/test_search.py
+capability-memory/tests/integration/test_service.py
+capability-memory/tests/integration/test_sync.py
+capability-memory/tests/unit/test_event_model.py
+capability-memory/tests/unit/test_event_store.py
+capability-memory/tests/unit/test_git_client.py
+capability-memory/tests/unit/test_redaction.py
+capability-memory/tests/unit/test_renderer.py
+capability-memory/tests/unit/test_replay.py
+capability-memory/tests/unit/test_taxonomy_scoring.py
+capability-memory/tests/unit/test_types_config.py
+capability-memory/uv.lock
 docs/product/2026-09-04-capability-memory-design.md
 docs/product/2026-09-06-capability-memory-hardening-design.md
+docs/product/2026-09-06-distributed-capability-memory-design.md
 docs/product/plans/2026-09-04-capability-memory.md
 docs/product/plans/2026-09-06-capability-memory-hardening.md
+docs/superpowers/plans/2026-09-06-distributed-capability-memory.md
 plugins/supermind/.codex-plugin/plugin.json
-plugins/supermind/evaluation/retrieval-v1.json
-plugins/supermind/model.lock.json
-plugins/supermind/pyproject.toml
-plugins/supermind/requirements.lock
+plugins/supermind/scripts/bootstrap.py
 plugins/supermind/scripts/capability-memory
 plugins/supermind/skills/supermind/SKILL.md
 plugins/supermind/skills/supermind/agents/openai.yaml
 plugins/supermind/skills/supermind/references/actions.md
 plugins/supermind/skills/supermind/references/capability-routing.md
 plugins/supermind/skills/supermind/references/product-state.md
-plugins/supermind/src/supermind_memory/__init__.py
-plugins/supermind/src/supermind_memory/bootstrap.py
-plugins/supermind/src/supermind_memory/cli.py
-plugins/supermind/src/supermind_memory/compatibility.py
-plugins/supermind/src/supermind_memory/config.py
-plugins/supermind/src/supermind_memory/decision.py
-plugins/supermind/src/supermind_memory/discovery.py
-plugins/supermind/src/supermind_memory/embeddings.py
-plugins/supermind/src/supermind_memory/explorer.py
-plugins/supermind/src/supermind_memory/health.py
-plugins/supermind/src/supermind_memory/lifecycle.py
-plugins/supermind/src/supermind_memory/repository.py
-plugins/supermind/src/supermind_memory/redaction.py
-plugins/supermind/src/supermind_memory/retrieval_evaluation.py
-plugins/supermind/src/supermind_memory/schema.py
-plugins/supermind/src/supermind_memory/scoring.py
-plugins/supermind/src/supermind_memory/search.py
-plugins/supermind/src/supermind_memory/service.py
-plugins/supermind/src/supermind_memory/source_resolution.py
-plugins/supermind/src/supermind_memory/taxonomy.py
-plugins/supermind/src/supermind_memory/types.py
-plugins/supermind/src/supermind_memory/workflow.py
-plugins/supermind/tests/conftest.py
-plugins/supermind/tests/e2e/test_login_reuse.py
-plugins/supermind/tests/integration/test_cli.py
-plugins/supermind/tests/integration/test_discovery.py
-plugins/supermind/tests/integration/test_explorer.py
-plugins/supermind/tests/integration/test_health.py
-plugins/supermind/tests/integration/test_repository.py
-plugins/supermind/tests/integration/test_search.py
-plugins/supermind/tests/integration/test_service.py
-plugins/supermind/tests/unit/test_taxonomy_scoring.py
-plugins/supermind/tests/unit/test_redaction.py
-plugins/supermind/tests/unit/test_types_config.py
-plugins/supermind/uv.lock
+plugins/supermind/tests/test_launcher.py
+plugins/supermind/tool.lock.json
+plugins/supermind/vendor/supermind_capability_memory-0.2.0-py3-none-any.whl
+scripts/verify-distribution.py
 scripts/verify.sh'
 
 actual_files="$(
@@ -112,16 +151,33 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
-uv lock --check --project "$plugin_root"
+uv lock --check --project "$memory_root"
 if ! diff -u \
-  <(tail -n +3 "$plugin_root/requirements.lock") \
-  <(uv export --project "$plugin_root" --frozen --no-dev --no-emit-project --format requirements-txt | tail -n +3); then
+  <(tail -n +3 "$memory_root/requirements.lock") \
+  <(uv export --project "$memory_root" --frozen --no-dev --no-emit-project --format requirements-txt | tail -n +3); then
   echo "requirements.lock does not match the frozen project lock." >&2
   exit 1
 fi
 
-uv run --project "$plugin_root" pytest "$plugin_root/tests" -q
-uv run --project "$plugin_root" pytest "$plugin_root/tests/e2e/test_login_reuse.py" -q
+"$validator_python" "$project_root/scripts/verify-distribution.py"
+# These disjoint partitions cover the complete suite once. Each process owns its
+# native database runtime; service/e2e work can run alongside storage integrations.
+if [[ "$run_tests" == 1 ]]; then
+uv run --project "$memory_root" pytest "$memory_root/tests/integration" \
+  --ignore="$memory_root/tests/integration/test_service.py" -q &
+integration_pid=$!
+uv run --project "$memory_root" pytest "$memory_root/tests/unit" \
+  "$memory_root/tests/e2e" "$memory_root/tests/integration/test_service.py" \
+  "$plugin_root/tests" -q &
+behavior_pid=$!
+test_status=0
+wait "$integration_pid" || test_status=1
+wait "$behavior_pid" || test_status=1
+if [[ "$test_status" != 0 ]]; then
+  echo "Release tests failed." >&2
+  exit 1
+fi
+fi
 
 if grep -RInE \
   --exclude-dir=.git \
@@ -138,4 +194,8 @@ if grep -RInE \
   exit 1
 fi
 
-echo "Supermind release tree verified."
+if [[ "$run_tests" == 1 ]]; then
+  echo "Supermind release tree verified."
+else
+  echo "Supermind release structure verified (tests not run)."
+fi

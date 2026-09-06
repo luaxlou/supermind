@@ -1265,7 +1265,7 @@ def test_process_writer_cannot_enter_while_writer_lock_is_held(paths, repo):
     )
     writer = context.Process(
         target=_write_capability_with_signals,
-        args=(str(paths.database), write_attempted, write_finished),
+        args=(str(paths.database), str(paths.locks / "writer.lock"), write_attempted, write_finished),
     )
 
     holder.start()
@@ -1529,8 +1529,8 @@ def _hold_writer_lock(lock_path, acquired, release):
         release.wait(timeout=10)
 
 
-def _write_capability_with_signals(database_path, attempted, finished):
-    repository = CapabilityRepository.open(Path(database_path))
+def _write_capability_with_signals(database_path, lock_path, attempted, finished):
+    repository = CapabilityRepository.open(Path(database_path), writer_lock_path=Path(lock_path))
     attempted.set()
     repository.upsert_capability(
         _capability("process-blocked"),

@@ -5,6 +5,7 @@ import subprocess
 from contextlib import ExitStack
 from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -25,11 +26,14 @@ from supermind_memory.replay import ReplayResult, replay
 from supermind_memory.renderer import RepositoryRenderer, validate_render
 from supermind_memory.repository import CapabilityRepository
 from supermind_memory.search import CapabilitySearch
+from supermind_memory.service import CapabilityMemory
 from supermind_memory.sync import SyncBlocked, SyncCoordinator, SyncState
 from supermind_memory.types import (
     ArtifactType,
     Capability,
     Lifecycle,
+    HealthReport,
+    ReuseResult,
     RequirementProfile,
     SearchStatus,
 )
@@ -236,6 +240,32 @@ def test_two_devices_merge_changes_to_different_entities(devices):
         for entity_type, entity_id in device_b.replay().entities
         if entity_type == "capability"
     } == {"login", "upload"}
+
+
+def test_service_reuse_blocks_stale_payload_after_remote_reconciliation(devices):
+    _, source, device_a, device_b = devices
+    original = _capability_event("login", device="a", source=source)
+    device_a.mutate(original)
+    incoming = _capability_event("login", device="b", source=source,
+                                parent=original.event_id, summary="NEW REMOTE CONTRACT")
+    device_b.mutate(incoming)
+    memory = CapabilityMemory(
+        bootstrap=SimpleNamespace(), discovery=SimpleNamespace(), repository=device_a.repository,
+        search_engine=SimpleNamespace(), embedding_provider=device_a.coordinator.embeddings,
+        health_manager=SimpleNamespace(ensure_healthy=lambda: HealthReport(
+            True, "test", (), "2026-09-06T12:00:00Z")),
+        codex_home=device_a.paths.root.parent.parent, sync_coordinator=device_a.coordinator,
+    )
+    reuse = ReuseResult("login", "consumer", True, 0.1, 2.0)
+    with pytest.raises(SyncBlocked, match="authority_changed"):
+        memory.record_use(reuse)
+    assert device_a.store.load_all() == tuple(sorted((original, incoming), key=lambda event: event.event_id))
+    assert device_a.repository.get_capability("login").summary == "NEW REMOTE CONTRACT"
+    assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+    assert not device_a.replay().conflicts
+    updated = memory.record_use(reuse)
+    assert updated.summary == "NEW REMOTE CONTRACT"
+    assert len([event for event in device_a.store.load_all() if event.entity_type == "reuse_outcome"]) == 1
 
 
 def test_sync_transaction_uses_and_validates_production_repository_renderer(devices):

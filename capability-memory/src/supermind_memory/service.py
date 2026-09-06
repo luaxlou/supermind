@@ -6,12 +6,13 @@ import hashlib
 import json
 import math
 from collections.abc import Sequence
+from contextvars import ContextVar
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
 
 from supermind_memory.bootstrap import Bootstrap
-from supermind_memory.config import MemoryPaths
 from supermind_memory.discovery import CapabilityDiscovery
 from supermind_memory.embeddings import EmbeddingProvider
 from supermind_memory.event_model import AuthorityEvent, canonical_json
@@ -61,6 +62,21 @@ MAX_CONSISTENCY_RESTARTS = 3
 MAX_RETRIEVAL_REPAIRS = 1
 
 
+def _authority_mutation(method):
+    """Bind semantic reads to the exact authority revision used by their write."""
+    @wraps(method)
+    def guarded(self, *args, **kwargs):
+        if self._mutation_snapshot.get() is not None:
+            return method(self, *args, **kwargs)
+        digest = replay(self._require_sync_coordinator().store.load_all()).digest
+        token = self._mutation_snapshot.set(digest)
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._mutation_snapshot.reset(token)
+    return guarded
+
+
 class CapabilityMemory:
     """Coordinate health, discovery, persistence, and evidence-driven reuse."""
 
@@ -94,6 +110,7 @@ class CapabilityMemory:
         self.command_runner = command_runner
         self._last_sync_report: SyncReport | None = None
         self._project_root: Path | None = None
+        self._mutation_snapshot: ContextVar[str | None] = ContextVar("authority_mutation_snapshot", default=None)
 
     def __enter__(self) -> "CapabilityMemory":
         return self
@@ -104,6 +121,7 @@ class CapabilityMemory:
     def close(self) -> None:
         self.repository.close()
 
+    @_authority_mutation
     def initialize(self, project_root: Path) -> HealthReport:
         self._ensure_healthy()
         self.bootstrap.initialize(project_root)
@@ -206,11 +224,13 @@ class CapabilityMemory:
             attempts,
         )
 
+    @_authority_mutation
     def discover(self, context: DiscoveryContext) -> DiscoveryResult:
         self._assert_event_projection()
         self._ensure_healthy()
         return self._discover_and_persist(context)
 
+    @_authority_mutation
     def refresh_sources(self, project_root: Path) -> DiscoveryResult:
         self._ensure_healthy()
         return self._discover_and_persist(
@@ -224,6 +244,7 @@ class CapabilityMemory:
         self._assert_event_projection()
         return self.repository.get_capability(capability_id)
 
+    @_authority_mutation
     def observe_unmet_requirement(
         self,
         requirement: RequirementProfile,
@@ -281,6 +302,7 @@ class CapabilityMemory:
         self._assert_event_projection()
         return self.repository.list_requirement_events(observation_id)
 
+    @_authority_mutation
     def link_requirement_observation(
         self,
         observation_id: str,
@@ -425,9 +447,12 @@ class CapabilityMemory:
         coordinator = self._require_sync_coordinator()
         if repository_name != coordinator.config.repository:
             raise ValueError("migration repository does not match configured private repository")
-        legacy_paths = MemoryPaths.from_codex_home(legacy_data_home)
+        legacy_root = legacy_data_home.expanduser().absolute() / "supermind" / "capability-memory"
+        legacy_database = legacy_root / "database"
+        if not legacy_database.is_dir() or legacy_database.is_symlink():
+            raise CapabilityMemoryBlocked("legacy_store_missing", "legacy embedded database is unavailable", ())
         with CapabilityRepository.open(
-            legacy_paths.database, writer_lock_path=legacy_paths.locks / "writer.lock",
+            legacy_database, writer_lock_path=legacy_root / "locks" / "writer.lock",
         ) as legacy:
             report, self._last_sync_report = coordinator.migrate(legacy)
         self._bind_authority_digest(self._last_sync_report.event_set_digest)
@@ -459,6 +484,7 @@ class CapabilityMemory:
             reasons=(),
         )
 
+    @_authority_mutation
     def register(
         self,
         capability: Capability,
@@ -540,6 +566,7 @@ class CapabilityMemory:
             self.repository._record_dml_unlocked()
         return stored
 
+    @_authority_mutation
     def record_use(self, result: ReuseResult) -> Capability:
         result = redact_reuse_result(result)
         self._ensure_healthy()
@@ -691,13 +718,30 @@ class CapabilityMemory:
         self, specifications: Sequence[tuple[str, str, str, object]],
     ) -> SyncReport:
         coordinator = self._require_sync_coordinator()
-        try:
-            report = coordinator.mutate_batch(
-                lambda current: tuple(
-                    self._event(entity_type, entity_id, operation, payload, current)
-                    for entity_type, entity_id, operation, payload in specifications
+        expected_digest = self._mutation_snapshot.get() or replay(coordinator.store.load_all()).digest
+        def create_events(current: ReplayResult) -> tuple[AuthorityEvent, ...]:
+            if current.digest != expected_digest:
+                raise SyncBlocked("authority_changed", ("memory authority changed during semantic mutation; retry from current state",))
+            batch = list(specifications)
+            evidence_by_capability: dict[str, list[str]] = {}
+            for entity_type, entity_id, _, payload in batch:
+                if entity_type not in {"evidence", "reuse_outcome"}:
+                    continue
+                capability_id = payload["capability_id"]
+                identifiers = evidence_by_capability.setdefault(
+                    capability_id, [item.id for item in self.repository.list_evidence(capability_id)],
                 )
-            )
+                if entity_id not in identifiers:
+                    identifiers.append(entity_id)
+            for capability_id, identifiers in evidence_by_capability.items():
+                key = "evidence-order-" + hashlib.sha256(capability_id.encode()).hexdigest()
+                batch.append(("metadata", key, "set", {"value": {
+                    "capability_id": capability_id, "evidence_ids": identifiers,
+                }}))
+            return tuple(self._event(entity_type, entity_id, operation, payload, current)
+                         for entity_type, entity_id, operation, payload in batch)
+        try:
+            report = coordinator.mutate_batch(create_events)
         except SyncBlocked as error:
             if error.sync_state is not None and error.event_set_digest and error.commit_id:
                 self._last_sync_report = SyncReport(
@@ -717,21 +761,35 @@ class CapabilityMemory:
     def _register_event_first(self, capability: Capability, evidence: Sequence[Evidence]) -> Capability:
         existing = self.repository.get_capability(capability.id)
         known = tuple(self.repository.list_evidence(capability.id))
-        by_id = {item.id: item for item in known}
+        by_id = {row["id"]: self.repository._evidence_from_row(row)
+                 for row in self.repository._rows("evidence")}
+        supplied = {}
         for item in evidence:
+            if item.id in supplied and supplied[item.id] != item:
+                raise ValueError(f"conflicting duplicate evidence id: {item.id}")
+            supplied[item.id] = item
             if item.id in by_id and by_id[item.id] != item:
                 raise ValueError(f"evidence id already exists: {item.id}")
-        ordered = tuple(sorted({item.id: item for item in (*known, *evidence)}.values(), key=lambda x: (x.observed_at, x.id)))
+        ordered = tuple({item.id: item for item in (*known, *evidence)}.values())
         basis = replace(capability, lifecycle=existing.lifecycle) if existing else capability
         now = _utc_now()
         stored = replace(capability, lifecycle=next_lifecycle(basis, ordered), updated_at=now,
                          last_verified_at=_last_verification(ordered),
                          created_at=existing.created_at if existing else capability.created_at)
         operation = "updated" if existing else "registered"
+        audit = Event(
+            id=self._next_audit_id_unlocked("registered", stored.id,
+                f"{stored.source_revision}:{','.join(sorted(supplied))}", table_name="events"),
+            capability_id=stored.id, event_type="registered",
+            source_context=_source_context(ordered, stored.source_uri), occurred_at=now,
+            previous_state=existing.lifecycle if existing else capability.lifecycle,
+            resulting_state=stored.lifecycle, reason="capability registered with current evidence",
+        )
         self._commit_events((
             *(("evidence", item.id, "observed", asdict(item))
-              for item in evidence if item.id not in by_id),
+              for item in supplied.values() if item.id not in by_id),
             ("capability", stored.id, operation, asdict(stored)),
+            ("audit", audit.id, "observed", asdict(audit)),
         ))
         projected = self.repository.get_capability(stored.id)
         if projected is None:
@@ -743,6 +801,8 @@ class CapabilityMemory:
         if capability is None:
             raise ValueError(f"unknown capability: {result.capability_id}")
         existing = self.repository.list_evidence(capability.id)
+        for item in existing:
+            validate_evidence(item)
         if not source_available(capability, existing):
             raise ValueError(f"capability source is unavailable: {capability.source_uri}")
         now = _utc_now()
@@ -757,12 +817,24 @@ class CapabilityMemory:
             supporting_uri=None, integration_effort=result.integration_effort,
             benefit=result.benefit, failure_risk=0.0 if result.succeeded else 1.0,
         )
-        updated = replace(capability, lifecycle=next_lifecycle(capability, (*existing, outcome)),
-                          expected_net_value=_evidence_net_value((*existing, outcome)),
-                          updated_at=now)
+        net_value = _evidence_net_value((*existing, outcome))
+        if not math.isfinite(net_value):
+            raise ValueError("aggregate evidence economics must be finite")
+        provisional = replace(capability, expected_net_value=net_value, updated_at=now)
+        updated = replace(provisional, lifecycle=next_lifecycle(provisional, (*existing, outcome)))
+        audit = Event(
+            id=outcome.id.replace("reuse-", "reused-", 1), capability_id=capability.id,
+            event_type="reused", source_context=project, occurred_at=now,
+            previous_state=capability.lifecycle, resulting_state=updated.lifecycle,
+            reason=("independent reuse succeeded" if result.succeeded
+                    and capability.lifecycle is not Lifecycle.RECOMMENDED
+                    and updated.lifecycle is Lifecycle.RECOMMENDED
+                    else "reuse succeeded" if result.succeeded else result.failure_reason or "reuse failed"),
+        )
         self._commit_events((
             ("reuse_outcome", outcome.id, "recorded", asdict(outcome)),
             ("capability", updated.id, "updated", asdict(updated)),
+            ("audit", audit.id, "observed", asdict(audit)),
         ))
         projected = self.repository.get_capability(updated.id)
         if projected is None:
@@ -834,6 +906,7 @@ class CapabilityMemory:
             report.failures,
         )
 
+    @_authority_mutation
     def _discover_and_persist(self, context: DiscoveryContext) -> DiscoveryResult:
         metadata = None
         if isinstance(self.discovery_engine, CapabilityDiscovery):
@@ -944,12 +1017,14 @@ class CapabilityMemory:
             candidate = capability
             if existing is not None:
                 candidate = replace(
-                    capability, lifecycle=Lifecycle.DEGRADED,
+                    capability, lifecycle=(Lifecycle.RETIRED if existing.lifecycle is Lifecycle.RETIRED
+                                           else Lifecycle.DEGRADED),
                     confidence=existing.confidence,
                     expected_net_value=existing.expected_net_value,
                     embedding_generation=existing.embedding_generation,
                     created_at=existing.created_at, last_verified_at=None,
                 )
+                specifications.extend(self._invalidation_events(candidate, existing, "content_hash", "changed"))
             specifications.append((
                 "capability", candidate.id, "updated" if existing else "registered", asdict(candidate)
             ))
@@ -957,12 +1032,41 @@ class CapabilityMemory:
         for existing in self.repository.list_capabilities():
             if existing.id in discovered_ids or not _missing_scanned_source(existing, refresh_roots):
                 continue
-            degraded = replace(existing, lifecycle=Lifecycle.DEGRADED,
+            if existing.lifecycle is Lifecycle.DEGRADED and any(
+                item.evidence_type == "source_availability" and item.outcome == "unavailable"
+                for item in self.repository.list_evidence(existing.id)
+            ):
+                continue
+            degraded = replace(existing, lifecycle=(Lifecycle.RETIRED if existing.lifecycle is Lifecycle.RETIRED
+                                                   else Lifecycle.DEGRADED),
                                updated_at=_utc_now(), last_verified_at=None)
+            specifications.extend(self._invalidation_events(degraded, existing, "source_availability", "unavailable"))
             specifications.append(("capability", degraded.id, "updated", asdict(degraded)))
         if specifications:
             self._commit_events(specifications)
         return DiscoveryResult(tuple(self.repository.get_capability(item.id) or item for item in stored), discovered.sources_scanned)
+
+    def _invalidation_events(self, candidate: Capability, previous: Capability,
+                             evidence_type: str, outcome: str) -> list[tuple[str, str, str, object]]:
+        now = _utc_now()
+        identifier = self._next_audit_id_unlocked("invalidation", candidate.id,
+            f"{evidence_type}:{candidate.content_hash}:{candidate.source_revision}", table_name="evidence")
+        evidence = Evidence(
+            id=identifier, capability_id=candidate.id,
+            source_project=str(self._project_root or "capability-memory"),
+            evidence_type=evidence_type, outcome=outcome, metric_name=None, metric_value=None,
+            confidence=1.0, observed_at=now, supporting_uri=candidate.source_uri,
+        )
+        events = [("evidence", identifier, "observed", asdict(evidence))]
+        if previous.lifecycle != candidate.lifecycle:
+            audit = Event(
+                id=identifier.replace("invalidation-", "invalidated-", 1),
+                capability_id=candidate.id, event_type="invalidated", source_context=evidence.source_project,
+                occurred_at=now, previous_state=previous.lifecycle, resulting_state=candidate.lifecycle,
+                reason="discovered source is unavailable" if outcome == "unavailable" else "discovered source content changed",
+            )
+            events.append(("audit", audit.id, "observed", asdict(audit)))
+        return events
 
     def _invalidate_unlocked(
         self,

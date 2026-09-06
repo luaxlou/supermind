@@ -113,7 +113,7 @@ def test_register_uses_events_without_calling_direct_repository_writers(event_me
     assert reused.lifecycle is Lifecycle.RECOMMENDED
     events = transactions.store.load_all()
     assert {event.entity_type for event in events} == {
-        "capability", "evidence", "demand", "reuse_outcome",
+        "capability", "evidence", "demand", "reuse_outcome", "audit", "metadata",
     }
     assert replay(events).digest == memory.protocol_state()["event_set_digest"]
 

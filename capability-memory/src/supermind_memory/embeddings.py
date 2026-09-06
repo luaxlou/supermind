@@ -34,7 +34,8 @@ class ModelLock:
 
 
 def _load_model_lock() -> ModelLock:
-    lock_path = Path(__file__).resolve().parents[2] / "model.lock.json"
+    from supermind_memory.resources import distribution_data
+    lock_path = distribution_data("model.lock.json")
     payload = json.loads(lock_path.read_text(encoding="utf-8"))
     return ModelLock(
         name=payload["model"],

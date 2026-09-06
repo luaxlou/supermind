@@ -1024,7 +1024,8 @@ class CapabilityRepository:
         self._check_authority_binding(manifest)
         if self._active_generation_required:
             source_digest, source_count = self._structured_source_fingerprint()
-            model_lock_path = Path(__file__).resolve().parents[2] / "model.lock.json"
+            from supermind_memory.resources import distribution_data
+            model_lock_path = distribution_data("model.lock.json")
             if (
                 manifest.get("schema_version") != SCHEMA_VERSION
                 or manifest.get("vector_mode") != "exact"

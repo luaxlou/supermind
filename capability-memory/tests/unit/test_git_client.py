@@ -80,18 +80,19 @@ def test_subprocess_runner_disables_shell_and_preserves_captured_bytes(monkeypat
 
 
 def test_command_failure_redacts_captured_credentials(tmp_path):
+    credential = "ghp_" + "abcdefghijklmnopqrstuvwxyz1234567890"
     class FailingRunner:
         def run(self, argv, cwd=None):
             return CompletedCommand(
                 1,
                 b"",
-                b"Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+                f"Authorization: Bearer {credential}".encode(),
             )
 
     with pytest.raises(CommandFailed) as raised:
         GitClient(FailingRunner()).fetch(tmp_path, "origin")
 
-    assert "ghp_abcdefghijklmnopqrstuvwxyz1234567890" not in str(raised.value)
+    assert credential not in str(raised.value)
     assert "[REDACTED]" in str(raised.value)
 
 

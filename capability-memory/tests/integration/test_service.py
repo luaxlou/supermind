@@ -15,6 +15,7 @@ from supermind_memory.config import MemoryPaths
 from supermind_memory.discovery import CapabilityDiscovery, SourceRegistry
 from supermind_memory.health import HealthManager
 from supermind_memory.repository import CapabilityRepository, SearchHealthToken
+from supermind_memory.redaction import redact_relationship
 from supermind_memory.schema import EMBEDDING_DIMENSION, TABLE_SCHEMAS
 from supermind_memory.search import CapabilitySearch
 from supermind_memory.service import CapabilityMemory
@@ -37,14 +38,17 @@ from supermind_memory.types import (
 
 
 @pytest.fixture
-def memory(tmp_path, embeddings) -> CapabilityMemory:
+def memory(tmp_path, embeddings, event_transactions) -> CapabilityMemory:
     paths = MemoryPaths.from_codex_home(tmp_path / "codex")
     repository = CapabilityRepository.open(
         paths.database,
         writer_lock_path=paths.locks / "writer.lock",
     )
     repository.initialize()
-    health_manager = HealthManager(paths, repository, embeddings)
+    coordinator = event_transactions(paths, repository, embeddings)
+    from supermind_memory.replay import replay
+    health_manager = HealthManager(paths, repository, embeddings, authority_mode="events-v1",
+                                   expected_authority_digest=replay(()).digest)
     return CapabilityMemory(
         bootstrap=Bootstrap(
             paths,
@@ -58,6 +62,7 @@ def memory(tmp_path, embeddings) -> CapabilityMemory:
         embedding_provider=embeddings,
         health_manager=health_manager,
         codex_home=tmp_path / "codex",
+        sync_coordinator=coordinator,
     )
 
 
@@ -205,11 +210,13 @@ def test_registration_secret_identifiers_preserve_evidence_relationship_and_even
             return delegate.embed_documents(texts)
 
     memory.embedding_provider = RecordingEmbeddings()
+    memory.sync_coordinator.embeddings = memory.embedding_provider
     registered = memory.register(candidate, (evidence,))
-    memory.repository.append_relationship(Relationship(
+    relationship = redact_relationship(Relationship(
         "relation:client_secret=relationship-credential", raw_id, raw_id,
         "composition", ('password="compatibility-credential"',), (evidence.id,),
     ))
+    memory._commit_event("relationship", relationship.id, "declared", asdict(relationship))
     stored_evidence = memory.repository.list_evidence(registered.id)
     stored_events = memory.repository.list_events(registered.id)
     relationships = memory.repository.list_relationships(registered.id)
@@ -227,13 +234,15 @@ def test_registration_secret_identifiers_preserve_evidence_relationship_and_even
     assert "credential" not in exposed
 
 
-def test_repository_evidence_ingress_redacts_order_metadata(memory, tmp_path):
+def test_registration_evidence_ingress_redacts_event_order_metadata(memory, tmp_path):
     registered = _registered_login(memory, tmp_path)
-    memory.repository.append_evidence(replace(
+    evidence = replace(
         _verification(registered.id, "project-clean"),
         id="proof:client_secret=ordered-credential",
-    ))
-    exposed = repr((memory.repository._rows("evidence"), memory.repository._rows("metadata")))
+    )
+    memory.register(registered, (evidence,))
+    exposed = repr((memory.repository._rows("evidence"), memory.repository._rows("metadata"),
+                    memory.sync_coordinator.store.load_all()))
     assert "ordered-credential" not in exposed
     assert memory.rebuild().healthy
 
@@ -331,6 +340,7 @@ def test_yaml_block_credentials_are_sanitized_before_embedding_and_persistence(m
             return delegate.embed_documents(texts)
 
     memory.embedding_provider = RecordingEmbeddings()
+    memory.sync_coordinator.embeddings = memory.embedding_provider
     candidate = replace(_login_capability(source), expected_net_value=5.0, summary=payload)
     stored = memory.register(candidate, (_verification(candidate.id, "project-safe"),))
     observation = memory.observe_unmet_requirement(RequirementProfile("req-block", "project-safe", payload))
@@ -358,6 +368,7 @@ def test_public_document_embedding_failure_is_sanitized(memory, tmp_path, operat
             raise RuntimeError('provider failed {"password":"provider-credential"}')
 
     memory.embedding_provider = UnavailableDocuments()
+    memory.sync_coordinator.embeddings = memory.embedding_provider
     with pytest.raises(CapabilityMemoryBlocked) as failure:
         if operation == "register":
             candidate = replace(_login_capability(source), expected_net_value=5.0)
@@ -517,10 +528,7 @@ def test_search_discards_a_result_when_authority_changes_at_a_barrier(
         source_uri=second_source.as_uri(),
         content_hash="hash-login-two",
     )
-    memory.repository.upsert_capability(
-        second,
-        [0.0] * EMBEDDING_DIMENSION,
-    )
+    memory._commit_event("capability", second.id, "registered", asdict(second))
     mutated.set()
     worker.join(timeout=20)
 
@@ -759,6 +767,7 @@ def test_secret_never_reaches_persisted_search_text_or_embedding_input(
 
     recorder = RecordingEmbeddings()
     memory.embedding_provider = recorder
+    memory.sync_coordinator.embeddings = recorder
     memory.health_manager.embedding_provider = recorder
 
     memory.initialize(project)
@@ -943,8 +952,8 @@ def test_refresh_preserves_evaluation_when_the_discovered_source_is_unchanged(
         if row["id"] == verified.id
     )
     fingerprint_before = memory.repository._authoritative_fingerprint()
-    maintenance_path = memory.health_manager.paths.runtime / "dml-maintenance.json"
-    maintenance_before = maintenance_path.read_bytes()
+    events_path = memory.sync_coordinator.paths.checkout / "events"
+    events_before = _tree_bytes(events_path)
 
     refreshed = memory.refresh_sources(project).capabilities[0]
 
@@ -958,7 +967,7 @@ def test_refresh_preserves_evaluation_when_the_discovered_source_is_unchanged(
         if row["id"] == verified.id
     ) == row_before
     assert memory.repository._authoritative_fingerprint() == fingerprint_before
-    assert maintenance_path.read_bytes() == maintenance_before
+    assert _tree_bytes(events_path) == events_before
 
 
 def test_refresh_degrades_a_capability_when_its_discovered_source_is_removed(
@@ -1379,8 +1388,8 @@ def test_record_use_uses_commit_order_not_future_observation_time_for_availabili
         outcome="unavailable",
         observed_at="2026-09-04T03:00:00Z",
     )
-    memory.repository.append_evidence(future_available)
-    memory.repository.append_evidence(current_unavailable)
+    memory._commit_event("evidence", future_available.id, "observed", asdict(future_available))
+    memory._commit_event("evidence", current_unavailable.id, "observed", asdict(current_unavailable))
     evidence_before = memory.repository.list_evidence(registered.id)
 
     with pytest.raises(ValueError, match="source is unavailable"):
@@ -1455,7 +1464,7 @@ def test_record_use_revalidates_all_historical_evidence_inside_the_lock(
     assert _tree_bytes(memory.bootstrap.paths.database) == database_before
 
 
-def test_register_embeds_before_entering_its_single_writer_lock(
+def test_register_embeds_before_entering_projection_writer_lock(
     memory: CapabilityMemory,
     tmp_path: Path,
 ) -> None:
@@ -1468,12 +1477,15 @@ def test_register_embeds_before_entering_its_single_writer_lock(
     assert evaluated is not None
     memory.health_manager = _AlwaysHealthyHealthManager()
     original_lock = memory.repository._writer_lock
+    original_prepare = memory.repository._prepare_transaction_unlocked
     state = {"locked": False, "entries": 0, "embedded": False}
+    timeline = []
 
     class TrackingEmbeddings:
         def embed_documents(self, texts):
             assert state["locked"] is False
             state["embedded"] = True
+            timeline.append("embed")
             return memory.search_engine._embeddings.embed_documents(texts)
 
         def embed_query(self, text):
@@ -1483,18 +1495,31 @@ def test_register_embeds_before_entering_its_single_writer_lock(
     def tracked_lock():
         state["entries"] += 1
         state["locked"] = True
+        timeline.append("lock")
         try:
             with original_lock():
                 yield
         finally:
             state["locked"] = False
 
+    def tracked_prepare(*args, **kwargs):
+        assert state["locked"] is True
+        timeline.append("write")
+        return original_prepare(*args, **kwargs)
+
     memory.embedding_provider = TrackingEmbeddings()
+    memory.sync_coordinator.embeddings = memory.embedding_provider
     memory.repository._writer_lock = tracked_lock
+    memory.repository._prepare_transaction_unlocked = tracked_prepare
 
     memory.register(evaluated, [_verification(evaluated.id, "project-a")])
 
-    assert state == {"locked": False, "entries": 1, "embedded": True}
+    assert state["locked"] is False
+    assert state["embedded"] is True
+    # Event authority validation may acquire a read lock before projection.
+    # The actual projection write must begin after document embedding.
+    assert timeline.count("write") == 1
+    assert timeline.index("embed") < timeline.index("write")
 
 
 def test_register_rolls_back_byte_for_byte_when_evidence_write_fails(
@@ -1510,14 +1535,15 @@ def test_register_rolls_back_byte_for_byte_when_evidence_write_fails(
     evaluated = memory.evaluate(_login_capability(source), _positive_value_inputs()).capability
     assert evaluated is not None
     database_before = _tree_bytes(memory.health_manager.paths.database)
-    original_append = memory.repository._append_once
+    event_files_before = _tree_bytes(memory.sync_coordinator.paths.checkout / "events")
+    original_overwrite = CapabilityRepository._overwrite_table_unlocked
 
-    def fail_evidence(table_name, row):
+    def fail_evidence(repository, table_name, schema, rows):
         if table_name == "evidence":
             raise RuntimeError("injected evidence write failure")
-        return original_append(table_name, row)
+        return original_overwrite(repository, table_name, schema, rows)
 
-    monkeypatch.setattr(memory.repository, "_append_once", fail_evidence)
+    monkeypatch.setattr(CapabilityRepository, "_overwrite_table_unlocked", fail_evidence)
 
     with pytest.raises(RuntimeError, match="injected evidence write failure"):
         memory.register(
@@ -1526,6 +1552,7 @@ def test_register_rolls_back_byte_for_byte_when_evidence_write_fails(
         )
 
     assert _tree_bytes(memory.health_manager.paths.database) == database_before
+    assert _tree_bytes(memory.sync_coordinator.paths.checkout / "events") == event_files_before
     assert memory.get(evaluated.id) is None
     assert memory.repository.list_evidence(evaluated.id) == ()
     assert memory.repository.list_events(evaluated.id) == ()
@@ -1677,6 +1704,7 @@ def test_final_yaml_scalars_never_cross_documents_or_persistence(memory, tmp_pat
             return delegate.embed_documents(texts)
 
     memory.embedding_provider = RecordingEmbeddings()
+    memory.sync_coordinator.embeddings = memory.embedding_provider
     candidate = replace(_login_capability(source), expected_net_value=5.0, summary="login\n" + payload)
     stored = memory.register(candidate, (_verification(candidate.id, "project-safe"),))
     observation = memory.observe_unmet_requirement(RequirementProfile("req-scalar", "project-safe", payload))

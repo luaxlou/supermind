@@ -11,10 +11,22 @@ and orchestrate the available Codex skills and tools. The user supplies intent, 
 ## Start with Capability Memory
 
 On every invocation, resolve `../../scripts/capability-memory` relative to this Skill as the local
-Capability Memory launcher. Run `init --project-root <active-project> --format json`, then run
-`health --format json`. These calls are mandatory and automatic. If either exits `3`, stop the
+Capability Memory launcher. It provisions the hash-locked standalone Python CLI and communicates
+using protocol version 1; it never imports an embedded memory implementation. Run
+`init --project-root <active-project> --format json`, then run `health --format json`.
+If initialization reports `memory_repository_unconfigured`, obtain the user's private GitHub
+repository and connect it with `init --repo <owner/repository>`, or create the selected private
+repository in the authenticated account with `init --create-private --name <repository>`.
+Include `--project-root <active-project>` in either form. Repository selection is required only
+once per data home. These calls are mandatory and automatic. If either otherwise exits `3`, stop the
 affected product work and report its structured blocking fault and repair attempts; never treat a
 failed health gate as an empty capability library.
+
+All memory mutations and Explorer requests use this standalone CLI. Missing or incompatible tools
+block the affected operation without fallback. Updates create local event commits and incrementally
+synchronize with the configured private GitHub repository; vectors, models, and LanceDB stay local.
+For “打开能力库”, call `open --format json`: it synchronizes and validates the generated categorized,
+collapsible root README before opening the private repository. No resident Web service is required.
 
 ## Keep control of the work
 

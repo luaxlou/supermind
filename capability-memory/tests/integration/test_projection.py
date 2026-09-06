@@ -125,11 +125,24 @@ def test_comparison_detects_non_capability_drift(empty_repository, embeddings, a
 def test_embedding_failure_preserves_previous_projection(empty_repository, embeddings, authority_events, invalid_value):
     project_authority(replay(()), empty_repository, embeddings)
     class BrokenEmbeddings:
-        def embed_query(self, text):
-            return [invalid_value] * EMBEDDING_DIMENSION
+        def embed_documents(self, texts):
+            return [[invalid_value] * EMBEDDING_DIMENSION for _ in texts]
     with pytest.raises(ValueError, match="finite"):
         project_authority(replay(authority_events), empty_repository, BrokenEmbeddings())
     assert compare_projection(replay(()), empty_repository).equivalent
+
+
+def test_projection_embeds_capability_documents_not_queries(empty_repository, embeddings, authority_events):
+    class DocumentsOnly:
+        def embed_documents(self, texts):
+            return embeddings.embed_documents(texts)
+
+        def embed_query(self, text):
+            pytest.fail("capability documents cannot use the query embedding route")
+
+    result = replay(authority_events)
+    project_authority(result, empty_repository, DocumentsOnly())
+    assert compare_projection(result, empty_repository).equivalent
 
 
 def test_replace_authority_validates_typed_evidence_before_activation(empty_repository, embeddings, authority_events):

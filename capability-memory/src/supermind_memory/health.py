@@ -509,11 +509,13 @@ class HealthManager:
             failures.append(redact_text(f"generation_artifact_unavailable: {error}"))
 
     def _model_lock_digest(self) -> str:
-        path = Path(__file__).resolve().parents[2] / "model.lock.json"
+        from supermind_memory.resources import distribution_data
+        path = distribution_data("model.lock.json")
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
     def _evaluation_dataset_path(self) -> Path:
-        return Path(__file__).resolve().parents[2] / "evaluation" / "retrieval-v1.json"
+        from supermind_memory.resources import distribution_data
+        return distribution_data("evaluation/retrieval-v1.json")
 
     def _evaluation_dataset_digest(self) -> str:
         return hashlib.sha256(self._evaluation_dataset_path().read_bytes()).hexdigest()

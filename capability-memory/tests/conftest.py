@@ -64,6 +64,43 @@ def embeddings() -> KeywordEmbeddingProvider:
     return KeywordEmbeddingProvider()
 
 
+@pytest.fixture
+def event_transactions():
+    """Use real replay/projection for service tests without network transport."""
+    from types import SimpleNamespace
+    from supermind_memory.event_store import EventStore
+    from supermind_memory.projection import project_authority
+    from supermind_memory.replay import replay
+    from supermind_memory.sync import SyncReport, SyncState
+
+    class Transactions:
+        def __init__(self, paths, repository, provider):
+            self.paths = paths
+            self.repository = repository
+            self.embeddings = provider
+            paths.checkout.mkdir(parents=True, exist_ok=True)
+            self.store = EventStore(paths.checkout)
+            self.config = SimpleNamespace(
+                device_id="service-test", repository="owner/memory",
+                web_url="https://github.com/owner/memory", last_checked_remote_head="a" * 40,
+            )
+            project_authority(replay(()), repository, provider)
+
+        def mutate(self, factory):
+            return self.mutate_batch(lambda current: (factory(current),))
+
+        def mutate_batch(self, factory):
+            existing = self.store.load_all()
+            additions = tuple(factory(replay(existing)))
+            result = replay((*existing, *additions))
+            project_authority(result, self.repository, self.embeddings)
+            for event in additions:
+                self.store.append(event)
+            return SyncReport(SyncState.COMMITTED, "b" * 40, result.digest, "a" * 40)
+
+    return Transactions
+
+
 @pytest.fixture(params=[
     'password: !!str "first scalar material second scalar material"',
     "password: &credential 'first scalar material second scalar material'",

@@ -28,6 +28,9 @@ economics, and lifecycle details.
 
 - “查看能力库”, “show the capability library”, or equivalent: `inspect --view overview --format
   markdown`; use `--view table` when the user asks for catalog rows or filters.
+- “打开能力库”, “open the capability library”, or equivalent: `open --format json` synchronizes,
+  regenerates and validates the categorized, collapsible README, then opens the private GitHub
+  repository. `render --format json` refreshes generated Markdown without opening the browser.
 - “显示登录能力”, “show the login capability”, or equivalent: resolve the capability identifier
   from the latest complete search or table view, then use `inspect --view detail --capability-id
   <id> --format markdown`.
@@ -39,7 +42,8 @@ economics, and lifecycle details.
   implementation satisfies one, use `link-demand --input <link.json> --format json`, where the
   document contains exactly `observation_id` and `capability_id`.
 
-Inspection is read-only. Never substitute source-file scanning for these views, and never hide a
+`inspect` is read-only; `open` and `render` may commit and synchronize generated views.
+Never substitute source-file scanning for these views, and never hide a
 Capability Memory exit `3` behind a hand-written summary.
 
 Decision views use the same contract gate as `begin-design`: a declared exact contract is reusable,
