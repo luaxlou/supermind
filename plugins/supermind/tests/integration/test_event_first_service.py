@@ -181,7 +181,7 @@ def test_open_validates_render_then_preserves_repository_as_one_argv_item(
         return report
 
     (transactions.paths.checkout / "README.md").write_text("stale browser")
-    monkeypatch.setattr(memory, "render", render)
+    monkeypatch.setattr(transactions, "render_repository", render, raising=False)
 
     calls = []
 

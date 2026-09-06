@@ -391,8 +391,7 @@ class CapabilityMemory:
 
     def open_browser(self) -> dict[str, str]:
         coordinator = self._require_sync_coordinator()
-        report = self.render()
-        validate_render(coordinator.paths.checkout, report.event_set_digest)
+        self.render()
         runner = self.command_runner or SubprocessCommandRunner()
         completed = runner.run(("gh", "repo", "view", coordinator.config.repository, "--web"))
         if completed.returncode != 0:
