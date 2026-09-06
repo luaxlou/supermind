@@ -5,7 +5,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "event_id", "device_id", "entity_type", "entity_id", "operation", "parent_event_ids", "occurred_at", "payload", "content_hash"],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"type": "integer", "const": 1},
     "event_id": {"$ref": "#/$defs/identifier"},
     "device_id": {"$ref": "#/$defs/identifier"},
     "entity_type": {"enum": ["capability", "evidence", "relationship", "demand", "reuse_outcome", "metadata", "audit"]},
@@ -13,12 +13,12 @@
     "operation": {"type": "string"},
     "parent_event_ids": {"type": "array", "maxItems": 1024, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
     "occurred_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$"},
-    "payload": {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue"}},
+    "payload": {"type": "object", "maxProperties": 1024, "x-supermind-limits": {"max_depth": 16, "max_items": 1024, "max_utf8_bytes": 262144}, "additionalProperties": {"$ref": "#/$defs/jsonValue"}},
     "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   },
   "$defs": {
     "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
-    "jsonValue": {"anyOf": [{"type": "null"}, {"type": "boolean"}, {"type": "number"}, {"type": "string"}, {"type": "array", "items": {"$ref": "#/$defs/jsonValue"}}, {"type": "object", "additionalProperties": {"$ref": "#/$defs/jsonValue"}}]}
+    "jsonValue": {"anyOf": [{"type": "null"}, {"type": "boolean"}, {"type": "number"}, {"type": "string"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue"}}]}
   },
   "allOf": [
     {"if": {"properties": {"entity_type": {"const": "capability"}}}, "then": {"properties": {"operation": {"enum": ["registered", "updated", "tombstoned", "resolved"]}}}},

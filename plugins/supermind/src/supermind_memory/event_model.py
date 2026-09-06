@@ -10,11 +10,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TypeAlias
+from types import MappingProxyType
 
 from supermind_memory.redaction import sanitize_json
 
 
 JSONValue: TypeAlias = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
+FrozenJSONValue: TypeAlias = None | bool | int | float | str | tuple["FrozenJSONValue", ...] | Mapping[str, "FrozenJSONValue"]
 
 _EVENT_FIELDS = frozenset({
     "schema_version", "event_id", "device_id", "entity_type", "entity_id",
@@ -29,6 +31,8 @@ _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_PAYLOAD_DEPTH = 16
 _MAX_PAYLOAD_ITEMS = 1_024
 _MAX_PAYLOAD_BYTES = 256 * 1024
+_MAX_PARENT_EVENT_IDS = 1_024
+_MARKER_TEXT = re.compile(r"\S(?:.*\S)?\Z")
 
 # Operations are intentionally entity-specific: replay must never infer a
 # transition from an arbitrary string submitted by a newer or malformed client.
@@ -126,15 +130,22 @@ class AuthorityEvent:
     operation: str
     parent_event_ids: tuple[str, ...]
     occurred_at: str
-    payload: Mapping[str, JSONValue]
+    payload: Mapping[str, FrozenJSONValue]
     content_hash: str
 
     def __post_init__(self) -> None:
         parents = tuple(self.parent_event_ids)
-        payload = dict(self.payload)
+        payload = _thaw_payload(self.payload)
+        document = {
+            **_event_document(
+                self.schema_version, self.event_id, self.device_id, self.entity_type,
+                self.entity_id, self.operation, parents, self.occurred_at, payload,
+            ),
+            "content_hash": self.content_hash,
+        }
+        _validate_event_document(document, verify_hash=True)
         object.__setattr__(self, "parent_event_ids", parents)
-        object.__setattr__(self, "payload", payload)
-        _validate_event_document(self.to_document(), verify_hash=True)
+        object.__setattr__(self, "payload", _freeze_payload(payload))
 
     @classmethod
     def create(
@@ -202,7 +213,7 @@ def _event_document(
     operation: str,
     parent_event_ids: Sequence[str],
     occurred_at: str,
-    payload: Mapping[str, JSONValue],
+    payload: Mapping[str, object],
 ) -> dict[str, object]:
     return {
         "schema_version": schema_version,
@@ -213,7 +224,7 @@ def _event_document(
         "operation": operation,
         "parent_event_ids": list(parent_event_ids),
         "occurred_at": occurred_at,
-        "payload": dict(payload),
+        "payload": _thaw_payload(payload),
     }
 
 
@@ -221,9 +232,13 @@ def _decode_document(raw: bytes, label: str) -> dict[str, object]:
     if not isinstance(raw, bytes):
         raise EventValidationError(f"{label} must be UTF-8 bytes")
     try:
-        value = json.loads(raw.decode("utf-8"), parse_constant=_reject_json_constant)
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_members,
+            parse_constant=_reject_json_constant,
+        )
     except (UnicodeDecodeError, json.JSONDecodeError, EventValidationError) as error:
-        raise EventValidationError(f"invalid {label} JSON") from error
+        raise EventValidationError(f"invalid {label} JSON: {error}") from error
     if type(value) is not dict:
         raise EventValidationError(f"{label} must be a JSON object")
     return value
@@ -233,9 +248,18 @@ def _reject_json_constant(value: str) -> None:
     raise EventValidationError(f"non-finite JSON value: {value}")
 
 
+def _reject_duplicate_members(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    document: dict[str, object] = {}
+    for key, value in pairs:
+        if key in document:
+            raise EventValidationError(f"duplicate JSON member: {key}")
+        document[key] = value
+    return document
+
+
 def _validate_event_document(document: Mapping[str, object], *, verify_hash: bool) -> None:
     _require_exact_keys(document, _EVENT_FIELDS, "authority event")
-    if document["schema_version"] != 1:
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
         raise EventValidationError("unsupported event schema version")
     for field in ("event_id", "device_id", "entity_id"):
         _validate_identifier(field, document[field])
@@ -251,6 +275,8 @@ def _validate_event_document(document: Mapping[str, object], *, verify_hash: boo
         _validate_identifier("parent_event_id", parent)
     if len(parents) != len(set(parents)):
         raise EventValidationError("parent_event_ids must be unique")
+    if len(parents) > _MAX_PARENT_EVENT_IDS:
+        raise EventValidationError("parent_event_ids contains too many identifiers")
     if parents != sorted(parents):
         raise EventValidationError("parent_event_ids must be sorted")
     payload = _validate_payload(document["payload"])
@@ -274,13 +300,19 @@ def _validate_event_document(document: Mapping[str, object], *, verify_hash: boo
 
 def _validate_marker_document(document: Mapping[str, object]) -> None:
     _require_exact_keys(document, _MARKER_FIELDS, "memory marker")
-    if document["format"] != 1:
+    if type(document["format"]) is not int or document["format"] != 1:
         raise EventValidationError("unsupported memory format")
-    if document["event_schema_versions"] != [1]:
+    versions = document["event_schema_versions"]
+    if (
+        type(versions) is not list
+        or len(versions) != 1
+        or type(versions[0]) is not int
+        or versions[0] != 1
+    ):
         raise EventValidationError("memory marker must support exactly event schema version 1")
     for field in ("renderer_version", "repository_id", "default_branch"):
         value = document[field]
-        if type(value) is not str or not value or len(value) > 128 or value.strip() != value:
+        if type(value) is not str or not value or len(value) > 128 or _MARKER_TEXT.fullmatch(value) is None:
             raise EventValidationError(f"{field} must be a non-empty stable string")
     if any(character.isspace() for character in document["default_branch"]):
         raise EventValidationError("default_branch cannot contain whitespace")
@@ -319,7 +351,39 @@ def _normalize_parent_event_ids(parent_event_ids: Sequence[str]) -> tuple[str, .
         _validate_identifier("parent_event_id", parent)
     if len(parents) != len(set(parents)):
         raise EventValidationError("parent_event_ids must be unique")
+    if len(parents) > _MAX_PARENT_EVENT_IDS:
+        raise EventValidationError("parent_event_ids contains too many identifiers")
     return tuple(sorted(parents))
+
+
+def _freeze_payload(payload: Mapping[str, object]) -> Mapping[str, FrozenJSONValue]:
+    frozen = _freeze_json_value(_thaw_payload(payload))
+    if not isinstance(frozen, Mapping):  # pragma: no cover - payload is validated as an object.
+        raise EventValidationError("payload must be a JSON object")
+    return frozen
+
+
+def _freeze_json_value(value: JSONValue) -> FrozenJSONValue:
+    if type(value) is dict:
+        return MappingProxyType({key: _freeze_json_value(item) for key, item in value.items()})
+    if type(value) is list:
+        return tuple(_freeze_json_value(item) for item in value)
+    return value
+
+
+def _thaw_payload(payload: Mapping[str, object]) -> dict[str, JSONValue]:
+    value = _thaw_json_value(payload)
+    if type(value) is not dict:
+        raise EventValidationError("payload must be a JSON object")
+    return value
+
+
+def _thaw_json_value(value: object) -> JSONValue:
+    if isinstance(value, Mapping):
+        return {key: _thaw_json_value(item) for key, item in value.items()}  # type: ignore[dict-item]
+    if isinstance(value, (list, tuple)):
+        return [_thaw_json_value(item) for item in value]
+    return value  # type: ignore[return-value]
 
 
 def _validate_payload(value: object) -> dict[str, JSONValue]:

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -15,6 +16,29 @@ def _deep_value():
     for _ in range(17):
         value = [value]
     return value
+
+
+def _event(**overrides):
+    values = {
+        "event_id": "01JTEST0000000000000000099",
+        "device_id": "device-a",
+        "entity_type": "capability",
+        "entity_id": "login",
+        "operation": "registered",
+        "parent_event_ids": (),
+        "occurred_at": "2026-09-06T12:00:00Z",
+        "payload": {"name": "Login"},
+    }
+    values.update(overrides)
+    return AuthorityEvent.create(**values)
+
+
+def _rehash(document):
+    unsigned = {key: value for key, value in document.items() if key != "content_hash"}
+    import hashlib
+
+    document["content_hash"] = hashlib.sha256(canonical_json(unsigned)).hexdigest()
+    return document
 
 
 def test_authority_event_is_canonical_hashed_and_round_trips():
@@ -170,3 +194,69 @@ def test_decoder_rejects_a_rehashed_document_with_unredacted_secret(valid_event_
 
     with pytest.raises(EventValidationError, match="unsanitized"):
         AuthorityEvent.from_bytes(canonical_json(valid_event_document))
+
+
+def test_authoritative_payload_is_deeply_immutable_after_creation():
+    event = _event(payload={"nested": {"items": ["stable"]}})
+    encoded = event.to_bytes()
+
+    with pytest.raises((AttributeError, TypeError)):
+        event.payload["nested"]["items"].append("mutated")
+
+    assert event.to_bytes() == encoded
+    assert AuthorityEvent.from_bytes(encoded) == event
+
+
+def test_decoder_rejects_duplicate_members_even_when_last_member_hashes_cleanly():
+    raw = _event().to_bytes().replace(
+        b'"payload":',
+        b'"payload":{"token":"secret-value"},"payload":',
+        1,
+    )
+
+    assert b"secret-value" in raw
+    with pytest.raises(EventValidationError, match="duplicate"):
+        AuthorityEvent.from_bytes(raw)
+
+
+@pytest.mark.parametrize("field", ["schema_version"])
+def test_event_decoder_rejects_boolean_version_values(valid_event_document, field):
+    valid_event_document[field] = True
+
+    with pytest.raises(EventValidationError):
+        AuthorityEvent.from_bytes(canonical_json(_rehash(valid_event_document)))
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"format": True, "event_schema_versions": [1], "renderer_version": "1.0.0", "repository_id": "123", "default_branch": "main"},
+        {"format": 1, "event_schema_versions": [True], "renderer_version": "1.0.0", "repository_id": "123", "default_branch": "main"},
+    ],
+)
+def test_marker_decoder_rejects_boolean_version_values(document):
+    with pytest.raises(EventValidationError):
+        MemoryMarker.from_bytes(canonical_json(document))
+
+
+def test_event_rejects_more_parents_than_the_schema_limit():
+    with pytest.raises(EventValidationError, match="too many"):
+        _event(parent_event_ids=tuple(f"parent-{index}" for index in range(1_025)))
+
+
+def test_schemas_declare_the_decoder_limits_and_marker_whitespace_contract():
+    schema_root = Path(__file__).parents[2] / "schemas" / "v1"
+    event_schema = json.loads((schema_root / "event.schema.json").read_text())
+    marker_schema = json.loads((schema_root / "memory.schema.json").read_text())
+
+    assert event_schema["properties"]["schema_version"] == {"type": "integer", "const": 1}
+    assert event_schema["properties"]["parent_event_ids"]["maxItems"] == 1_024
+    assert event_schema["properties"]["payload"]["x-supermind-limits"] == {
+        "max_depth": 16,
+        "max_items": 1_024,
+        "max_utf8_bytes": 262_144,
+    }
+    assert marker_schema["properties"]["format"] == {"type": "integer", "const": 1}
+    assert marker_schema["properties"]["event_schema_versions"]["items"] == {"type": "integer", "const": 1}
+    assert marker_schema["properties"]["renderer_version"]["pattern"] == "^\\S(?:.*\\S)?$"
+    assert marker_schema["properties"]["repository_id"]["pattern"] == "^\\S(?:.*\\S)?$"
