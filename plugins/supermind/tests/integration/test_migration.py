@@ -358,6 +358,62 @@ def test_initiating_device_does_not_change_canonical_migration_events(
     assert json.loads((roots[1] / ".supermind-migration-v1.json").read_text())["device_id"] == "caller-b"
 
 
+@pytest.mark.parametrize(
+    ("device_id", "case"),
+    [
+        ("", "empty"),
+        ("caller with spaces", "spaces"),
+        ("x" * 129, "overlength"),
+        (17, "number"),
+        (None, "null"),
+        (["caller-a"], "array"),
+        ("client_secret=private-device-material", "sensitive-invalid"),
+    ],
+    ids=["empty", "spaces", "overlength", "number", "null", "array", "sensitive-invalid"],
+)
+def test_invalid_initiating_device_is_rejected_before_target_access(
+    populated_repository, empty_event_store, monkeypatch, device_id, case,
+):
+    target_accesses = []
+
+    def unexpected_target_access(*_args, **_kwargs):
+        target_accesses.append(case)
+        raise AssertionError("migration target was accessed")
+
+    monkeypatch.setattr(empty_event_store, "load_all", unexpected_target_access)
+    monkeypatch.setattr(empty_event_store, "append", unexpected_target_access)
+
+    with pytest.raises(MigrationBlocked) as raised:
+        export_embedded_store(populated_repository, empty_event_store, device_id)
+
+    blocked = raised.value
+    assert blocked.code == "migration_input_invalid"
+    assert blocked.message == (
+        "migration_input_invalid: initiating device must be a stable identifier"
+    )
+    assert blocked.attempts == ("initiating device must be a stable identifier",)
+    assert "private-device-material" not in str(blocked)
+    assert "private-device-material" not in repr(blocked.attempts)
+    assert target_accesses == []
+    assert list(empty_event_store.root.iterdir()) == []
+
+
+def test_sensitive_initiating_device_is_sanitized_in_journal(
+    populated_repository, empty_event_store,
+):
+    initiating_device = "password:private-device-material"
+
+    export_embedded_store(populated_repository, empty_event_store, initiating_device)
+
+    journal_path = empty_event_store.root / ".supermind-migration-v1.json"
+    raw_journal = journal_path.read_text(encoding="utf-8")
+    journal = json.loads(raw_journal)
+    assert journal["device_id"].startswith("redacted-")
+    assert initiating_device not in raw_journal
+    assert "private-device-material" not in raw_journal
+    assert {event.device_id for event in empty_event_store.load_all()} == {"migration-v1"}
+
+
 def test_interrupted_export_resumes_to_the_same_event_set_as_a_clean_export(
     tmp_path, populated_repository, empty_event_store, monkeypatch,
 ):

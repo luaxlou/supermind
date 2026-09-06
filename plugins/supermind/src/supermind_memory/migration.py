@@ -20,6 +20,7 @@ from supermind_memory.event_store import (
     EventStoreError,
 )
 from supermind_memory.projection import AuthoritySnapshot, _RESERVED_METADATA, authority_snapshot
+from supermind_memory.redaction import redact_identifier
 from supermind_memory.replay import ReplayError, replay
 from supermind_memory.repository import CapabilityRepository
 from supermind_memory.types import CapabilityMemoryBlocked, Evidence
@@ -64,6 +65,7 @@ def export_embedded_store(
     device_id: str,
 ) -> MigrationReport:
     """Export a validated legacy snapshot, resuming only its exact journal."""
+    initiating_device_id = _initiating_device_id(device_id)
     try:
         source = repository.authority_snapshot()
     except (RuntimeError, TypeError, ValueError) as error:
@@ -118,7 +120,7 @@ def export_embedded_store(
     journal = _load_or_create_journal(
         journal_path,
         source_digest=source_digest,
-        device_id=device_id,
+        device_id=initiating_device_id,
         intended_ids=intended_ids,
         intended_hashes=intended_hashes,
         final_digest=planned.digest,
@@ -162,6 +164,34 @@ def export_embedded_store(
     _write_journal(journal_path, journal)
     counts = Counter(event.entity_type for event in events)
     return MigrationReport(source_digest, replayed.digest, counts, equivalent)
+
+
+def _initiating_device_id(value: object) -> str:
+    """Validate caller identity without retaining unsafe provenance text."""
+    _validate_initiating_device_shape(value)
+    assert type(value) is str
+    safe = redact_identifier(value)
+    _validate_initiating_device_shape(safe)
+    return safe
+
+
+def _validate_initiating_device_shape(value: object) -> None:
+    try:
+        AuthorityEvent.create(
+            event_id="migration-device-validation",
+            device_id=value,  # type: ignore[arg-type]
+            entity_type="metadata",
+            entity_id="migration-device-validation",
+            operation="set",
+            parent_event_ids=(),
+            occurred_at=_OCCURRED_AT,
+            payload={"value": True},
+        )
+    except EventValidationError:
+        raise _blocked(
+            "migration_input_invalid",
+            "initiating device must be a stable identifier",
+        ) from None
 
 
 def _initial_events(
