@@ -127,6 +127,43 @@ def _json_tuple(value: str) -> tuple[str, ...]:
     return tuple(json.loads(value))
 
 
+def _strict_authority_json(value: object, expected_type: type | None, label: str) -> object:
+    """Decode canonical legacy JSON without accepting lossy normalization."""
+    if type(value) is not str:
+        raise RuntimeError(f"authoritative_store_corrupt: {label} is not JSON text")
+
+    def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON member {key}")
+            result[key] = item
+        return result
+
+    def reject_constant(constant: str) -> None:
+        raise ValueError(f"non-finite JSON value {constant}")
+
+    try:
+        decoded = json.loads(
+            value,
+            object_pairs_hook=reject_duplicates,
+            parse_constant=reject_constant,
+        )
+    except (json.JSONDecodeError, UnicodeError, ValueError) as error:
+        raise RuntimeError(
+            f"authoritative_store_corrupt: {label} contains invalid JSON: {error}"
+        ) from error
+    if expected_type is not None and type(decoded) is not expected_type:
+        raise RuntimeError(
+            f"authoritative_store_corrupt: {label} must encode a {expected_type.__name__}"
+        )
+    if _canonical_json(decoded) != value:
+        raise RuntimeError(
+            f"authoritative_store_corrupt: {label} is not canonical lossless JSON"
+        )
+    return decoded
+
+
 def validate_evidence(evidence: Evidence) -> None:
     """Validate persisted evidence economics at every authoritative boundary."""
     if not math.isfinite(evidence.confidence) or not 0.0 <= evidence.confidence <= 1.0:
@@ -467,31 +504,36 @@ class CapabilityRepository:
                         raise RuntimeError(
                             f"authoritative_store_corrupt: {name} schema is not canonical v2"
                         )
-                self._validate_requirement_history_unlocked()
+                raw_rows = {name: self._rows(name) for name in TABLE_SCHEMAS}
+                self._validate_requirement_history(
+                    raw_rows["requirement_observations"],
+                    raw_rows["requirement_events"],
+                )
                 self._read_evidence_order_unlocked(require_complete=True)
+                self._validate_authority_json_unlocked(raw_rows, _RESERVED_METADATA)
 
                 collections = {
                     "capabilities": tuple(
                         sorted(
-                            (self._capability_from_row(row) for row in self._rows("capabilities")),
+                            (self._capability_from_row(row) for row in raw_rows["capabilities"]),
                             key=lambda item: item.id,
                         )
                     ),
                     "evidence": tuple(
                         sorted(
-                            (self._evidence_from_row(row) for row in self._rows("evidence")),
+                            (self._evidence_from_row(row) for row in raw_rows["evidence"]),
                             key=lambda item: item.id,
                         )
                     ),
                     "relationships": tuple(
                         sorted(
-                            (self._relationship_from_row(row) for row in self._rows("relationships")),
+                            (self._relationship_from_row(row) for row in raw_rows["relationships"]),
                             key=lambda item: item.id,
                         )
                     ),
                     "events": tuple(
                         sorted(
-                            (self._event_from_row(row) for row in self._rows("events")),
+                            (self._event_from_row(row) for row in raw_rows["events"]),
                             key=lambda item: item.id,
                         )
                     ),
@@ -499,7 +541,7 @@ class CapabilityRepository:
                         sorted(
                             (
                                 self._requirement_observation_from_row(row)
-                                for row in self._rows("requirement_observations")
+                                for row in raw_rows["requirement_observations"]
                             ),
                             key=lambda item: item.id,
                         )
@@ -508,7 +550,7 @@ class CapabilityRepository:
                         sorted(
                             (
                                 self._requirement_event_from_row(row)
-                                for row in self._rows("requirement_events")
+                                for row in raw_rows["requirement_events"]
                             ),
                             key=lambda item: item.id,
                         )
@@ -523,7 +565,7 @@ class CapabilityRepository:
                 for evidence in collections["evidence"]:
                     validate_evidence(evidence)
 
-                metadata_rows = self._rows("metadata")
+                metadata_rows = raw_rows["metadata"]
                 metadata_keys = tuple(str(row["key"]) for row in metadata_rows)
                 if len(metadata_keys) != len(set(metadata_keys)):
                     raise RuntimeError(
@@ -532,20 +574,141 @@ class CapabilityRepository:
                 metadata = tuple(
                     sorted(
                         (
-                            (str(row["key"]), _canonical_json(json.loads(row["value"])))
+                            (str(row["key"]), row["value"])
                             for row in metadata_rows
                             if row["key"] not in _RESERVED_METADATA
                         ),
                         key=lambda item: item[0],
                     )
                 )
-                return AuthoritySnapshot(**collections, metadata=metadata)
+                snapshot = AuthoritySnapshot(**collections, metadata=metadata)
+                self._validate_snapshot_rows_lossless_unlocked(
+                    snapshot, raw_rows, _RESERVED_METADATA,
+                )
+                return snapshot
             except RuntimeError:
                 raise
             except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
                 raise RuntimeError(
                     f"authoritative_store_corrupt: invalid authoritative row: {error}"
                 ) from error
+
+    @staticmethod
+    def _validate_authority_json_unlocked(
+        rows: Mapping[str, list[dict[str, Any]]], reserved_metadata: set[str],
+    ) -> None:
+        list_fields = {
+            "capabilities": (
+                "category_path", "facets", "constraints", "stack", "runtime",
+                "platform", "dependencies", "compatibility",
+            ),
+            "relationships": ("compatibility", "evidence_ids"),
+        }
+        for table, fields_to_check in list_fields.items():
+            for row in rows[table]:
+                for field_name in fields_to_check:
+                    _strict_authority_json(
+                        row[field_name], list, f"{table}.{field_name}",
+                    )
+        tuple_fields = (
+            "category_hint", "stack", "constraints", "quality_requirements",
+            "runtime", "platform", "license",
+        )
+        for row in rows["requirement_observations"]:
+            requirement = _strict_authority_json(
+                row["requirement"], dict, "requirement_observations.requirement",
+            )
+            assert isinstance(requirement, dict)
+            for field_name in tuple_fields:
+                if field_name in requirement and type(requirement[field_name]) is not list:
+                    raise RuntimeError(
+                        "authoritative_store_corrupt: "
+                        f"requirement_observations.requirement.{field_name} must encode a list"
+                    )
+        for row in rows["metadata"]:
+            if row["key"] not in reserved_metadata:
+                _strict_authority_json(row["value"], None, f"metadata.{row['key']}")
+
+    @staticmethod
+    def _validate_snapshot_rows_lossless_unlocked(
+        snapshot: AuthoritySnapshot,
+        raw_rows: Mapping[str, list[dict[str, Any]]],
+        reserved_metadata: set[str],
+    ) -> None:
+        def capability_row(item: Capability) -> dict[str, object]:
+            row = asdict(item)
+            for field_name in (
+                "category_path", "facets", "constraints", "stack", "runtime",
+                "platform", "dependencies", "compatibility",
+            ):
+                row[field_name] = _canonical_json(row[field_name])
+            row["artifact_type"] = item.artifact_type.value
+            row["lifecycle"] = item.lifecycle.value
+            return row
+
+        def relationship_row(item: Relationship) -> dict[str, object]:
+            row = asdict(item)
+            row["compatibility"] = _canonical_json(item.compatibility)
+            row["evidence_ids"] = _canonical_json(item.evidence_ids)
+            return row
+
+        def event_row(item: Event) -> dict[str, object]:
+            row = asdict(item)
+            row["previous_state"] = (
+                item.previous_state.value if item.previous_state is not None else None
+            )
+            row["resulting_state"] = item.resulting_state.value
+            return row
+
+        def observation_row(item: RequirementObservation) -> dict[str, object]:
+            return {
+                "id": item.id,
+                "requirement": _canonical_json(asdict(item.requirement)),
+                "status": item.status,
+                "observed_at": item.observed_at,
+                "linked_capability_id": item.linked_capability_id,
+            }
+
+        rebuilt = {
+            "capabilities": [capability_row(item) for item in snapshot.capabilities],
+            "evidence": [asdict(item) for item in snapshot.evidence],
+            "relationships": [relationship_row(item) for item in snapshot.relationships],
+            "events": [event_row(item) for item in snapshot.events],
+            "requirement_observations": [
+                observation_row(item) for item in snapshot.requirement_observations
+            ],
+            "requirement_events": [
+                asdict(item) for item in snapshot.requirement_events
+            ],
+            "metadata": [
+                {"key": key, "value": value} for key, value in snapshot.metadata
+            ],
+        }
+        authoritative = {}
+        for table, values in raw_rows.items():
+            if table == "capabilities":
+                values = [
+                    {
+                        key: value
+                        for key, value in row.items()
+                        if key not in {"vector", "search_text"}
+                    }
+                    for row in values
+                ]
+            if table == "metadata":
+                values = [row for row in values if row["key"] not in reserved_metadata]
+            key = "key" if table == "metadata" else "id"
+            authoritative[table] = sorted(values, key=lambda row: row[key])
+            rebuilt[table] = sorted(rebuilt[table], key=lambda row: row[key])
+        if authoritative != rebuilt:
+            differing = sorted(
+                table for table in authoritative
+                if authoritative[table] != rebuilt[table]
+            )
+            raise RuntimeError(
+                "authoritative_store_corrupt: typed snapshot changes raw authority rows: "
+                + ", ".join(differing)
+            )
 
     def _check_authority_binding(self, manifest: Mapping[str, object] | None = None) -> None:
         # TEMPORARY Task 3 staging guard. Task 8 wires config and removes legacy authority.

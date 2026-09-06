@@ -19,7 +19,12 @@ import pyarrow as pa
 from supermind_memory.embeddings import EmbeddingProvider
 from supermind_memory.event_model import AuthorityEvent, EntityConflict, canonical_json
 from supermind_memory.replay import EntityKey, ReplayResult
-from supermind_memory.repository import CapabilityRepository, _EVIDENCE_ORDER_KEY, validate_evidence
+from supermind_memory.repository import (
+    CapabilityRepository,
+    _EVIDENCE_ORDER_KEY,
+    _canonical_json as repository_json,
+    validate_evidence,
+)
 from supermind_memory.schema import AUTHORITATIVE_SCHEMA_VERSION_KEY, EMBEDDING_DIMENSION, SCHEMA_VERSION, TABLE_SCHEMAS
 from supermind_memory.types import Capability, CapabilityMemoryBlocked, Event, Evidence, Relationship, RequirementEvent, RequirementObservation
 
@@ -139,7 +144,7 @@ def authority_snapshot(
                                       "sequences": {identifier: index for index, identifier in enumerate(evidence_ids, 1)}}
     return AuthoritySnapshot(
         **{name: tuple(sorted(items, key=lambda item: item.id)) for name, items in records.items()},
-        metadata=tuple((key, canonical_json(value).decode()) for key, value in sorted(metadata.items())),
+        metadata=tuple((key, repository_json(value)) for key, value in sorted(metadata.items())),
     )
 
 

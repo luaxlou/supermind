@@ -14,7 +14,11 @@ from types import MappingProxyType
 from uuid import uuid4
 
 from supermind_memory.event_model import AuthorityEvent, EventValidationError, canonical_json
-from supermind_memory.event_store import MAX_EVENT_FILE_BYTES, EventCollisionError, EventStore
+from supermind_memory.event_store import (
+    MAX_EVENT_FILE_BYTES,
+    EventStore,
+    EventStoreError,
+)
 from supermind_memory.projection import AuthoritySnapshot, _RESERVED_METADATA, authority_snapshot
 from supermind_memory.replay import ReplayError, replay
 from supermind_memory.repository import CapabilityRepository
@@ -23,6 +27,7 @@ from supermind_memory.types import CapabilityMemoryBlocked, Evidence
 
 _JOURNAL_NAME = ".supermind-migration-v1.json"
 _OCCURRED_AT = "1970-01-01T00:00:00Z"
+_MIGRATION_ORIGIN = "migration-v1"
 _JOURNAL_FIELDS = {
     "format",
     "source_digest",
@@ -61,9 +66,17 @@ def export_embedded_store(
     """Export a validated legacy snapshot, resuming only its exact journal."""
     try:
         source = repository.authority_snapshot()
+    except (RuntimeError, TypeError, ValueError) as error:
+        raise MigrationBlocked(
+            "authoritative_store_corrupt",
+            f"authoritative_store_corrupt: {error}",
+            (str(error),),
+        ) from None
+
+    try:
         source_document = _snapshot_document(source)
         source_digest = hashlib.sha256(canonical_json(source_document)).hexdigest()
-        events = _initial_events(source, source_digest, device_id)
+        events = _initial_events(source, source_digest)
         planned = replay(events)
         projected = authority_snapshot(
             planned.entities,
@@ -71,10 +84,10 @@ def export_embedded_store(
             diagnostic_ancestors=planned.diagnostic_ancestors,
             event_set_digest=planned.digest,
         )
-    except (EventValidationError, ReplayError, RuntimeError, TypeError, ValueError) as error:
+    except (EventValidationError, ReplayError, KeyError, TypeError, ValueError) as error:
         raise MigrationBlocked(
-            "authoritative_store_corrupt",
-            f"authoritative_store_corrupt: {error}",
+            "migration_source_unrepresentable",
+            f"migration_source_unrepresentable: {error}",
             (str(error),),
         ) from None
 
@@ -84,16 +97,15 @@ def export_embedded_store(
     )
     if oversized is not None:
         raise _blocked(
-            "migration_event_too_large",
+            "migration_source_unrepresentable",
             f"event {oversized.event_id} exceeds {MAX_EVENT_FILE_BYTES} bytes",
         )
 
     equivalent = _snapshot_document(projected) == source_document
     if not equivalent:
-        raise MigrationBlocked(
-            "migration_projection_mismatch",
-            "migration_projection_mismatch: replay does not reproduce legacy authority",
-            ("canonical replay snapshot differs from canonical source snapshot",),
+        raise _blocked(
+            "migration_source_unrepresentable",
+            "event envelope changes the canonical legacy authority snapshot",
         )
 
     journal_path = event_store.root / _JOURNAL_NAME
@@ -102,6 +114,7 @@ def export_embedded_store(
     expected_paths = {
         _relative_event_path(event).as_posix(): event for event in events
     }
+    target_events = _load_target_events(event_store)
     journal = _load_or_create_journal(
         journal_path,
         source_digest=source_digest,
@@ -109,15 +122,15 @@ def export_embedded_store(
         intended_ids=intended_ids,
         intended_hashes=intended_hashes,
         final_digest=planned.digest,
-        target_events=event_store.load_all(),
+        target_events=target_events,
     )
-    _validate_target_events(event_store.load_all(), events)
+    _validate_target_events(_load_target_events(event_store), events)
 
     completed = set(journal["completed_paths"])
     if not completed <= set(expected_paths):
         raise _blocked("migration_journal_invalid", "journal contains an unknown event path")
     present_paths = {
-        _relative_event_path(event).as_posix() for event in event_store.load_all()
+        _relative_event_path(event).as_posix() for event in _load_target_events(event_store)
     }
     if not completed <= present_paths:
         raise _blocked("migration_journal_invalid", "journal records an event file that is missing")
@@ -126,7 +139,7 @@ def export_embedded_store(
         relative = _relative_event_path(event).as_posix()
         try:
             path = event_store.append(event)
-        except EventCollisionError as error:
+        except EventStoreError as error:
             raise MigrationBlocked(
                 "migration_event_collision",
                 f"migration_event_collision: {error}",
@@ -140,7 +153,7 @@ def export_embedded_store(
             journal["completed_paths"] = sorted(completed)
             _write_journal(journal_path, journal)
 
-    loaded = event_store.load_all()
+    loaded = _load_target_events(event_store)
     _validate_target_events(loaded, events)
     replayed = replay(loaded)
     if replayed.digest != planned.digest:
@@ -154,7 +167,6 @@ def export_embedded_store(
 def _initial_events(
     snapshot: AuthoritySnapshot,
     source_digest: str,
-    device_id: str,
 ) -> tuple[AuthorityEvent, ...]:
     specifications: list[tuple[str, str, str, dict[str, object]]] = []
     for capability in snapshot.capabilities:
@@ -197,7 +209,7 @@ def _initial_events(
         built.append(
             AuthorityEvent.create(
                 event_id=f"migration-{identity}",
-                device_id=device_id,
+                device_id=_MIGRATION_ORIGIN,
                 entity_type=entity_type,
                 entity_id=entity_id,
                 operation=operation,
@@ -304,6 +316,17 @@ def _validate_target_events(
                 "migration_event_collision",
                 f"target event differs from migration plan: {event.event_id}",
             )
+
+
+def _load_target_events(event_store: EventStore) -> tuple[AuthorityEvent, ...]:
+    try:
+        return event_store.load_all()
+    except (EventStoreError, EventValidationError) as error:
+        raise MigrationBlocked(
+            "migration_event_collision",
+            f"migration_event_collision: target event set is invalid: {error}",
+            (str(error),),
+        ) from None
 
 
 def _read_journal(path: Path) -> dict[str, object]:

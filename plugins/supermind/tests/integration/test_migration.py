@@ -7,8 +7,8 @@ import json
 
 import pytest
 
-from supermind_memory.event_model import AuthorityEvent
-from supermind_memory.event_store import EventStore
+from supermind_memory.event_model import AuthorityEvent, canonical_json
+from supermind_memory.event_store import MAX_EVENT_FILE_BYTES, EventStore
 from supermind_memory.migration import MigrationBlocked, export_embedded_store
 from supermind_memory.projection import project_authority
 from supermind_memory.replay import replay
@@ -56,6 +56,32 @@ def _event(capability_id: str) -> Event:
         "event-1", capability_id, "verified", "project-a", "2026-09-04T00:00:00Z",
         Lifecycle.OBSERVED, Lifecycle.CANDIDATE, "verified during migration fixture",
     )
+
+
+def _raw_authority_rows(repository: CapabilityRepository) -> dict[str, list[dict[str, object]]]:
+    reserved = {
+        "authoritative_schema_version",
+        "evidence-commit-order-v1",
+        "authority_event_set_digest",
+        "authority_materialized_digest",
+        "authority_conflicts",
+    }
+    result = {}
+    for table in (
+        "capabilities", "evidence", "relationships", "events", "metadata",
+        "requirement_observations", "requirement_events",
+    ):
+        rows = repository._rows(table)
+        if table == "capabilities":
+            rows = [
+                {key: value for key, value in row.items() if key not in {"vector", "search_text"}}
+                for row in rows
+            ]
+        if table == "metadata":
+            rows = [row for row in rows if row["key"] not in reserved]
+        key = "key" if table == "metadata" else "id"
+        result[table] = sorted(rows, key=lambda row: row[key])
+    return result
 
 
 @pytest.fixture
@@ -115,6 +141,7 @@ def test_export_replay_preserves_all_rows_and_demand_history(
         item.id for item in populated_repository.list_evidence("login")
     ) == ("z-verification", "a-reuse")
     source = populated_repository.authority_snapshot()
+    source_rows = _raw_authority_rows(populated_repository)
     assert tuple(item.id for item in source.evidence) == ("a-reuse", "z-verification")
 
     report = export_embedded_store(
@@ -127,6 +154,7 @@ def test_export_replay_preserves_all_rows_and_demand_history(
 
         assert report.equivalent is True
         assert rebuilt.authority_snapshot() == source
+        assert _raw_authority_rows(rebuilt) == source_rows
         assert tuple(item.id for item in rebuilt.list_evidence("login")) == (
             "a-reuse", "z-verification",
         )
@@ -152,6 +180,21 @@ def test_export_replay_preserves_all_rows_and_demand_history(
     assert not any(event.entity_id == "authoritative_schema_version" for event in entities.values())
 
 
+def test_export_preserves_non_ascii_metadata_raw_rows(
+    tmp_path, populated_repository, empty_event_store, embeddings,
+):
+    populated_repository.set_metadata("localized", {"label": "登录能力"})
+    source_rows = _raw_authority_rows(populated_repository)
+
+    export_embedded_store(populated_repository, empty_event_store, "caller-a")
+    with CapabilityRepository.open(tmp_path / "localized-rebuilt" / "database") as rebuilt:
+        rebuilt.initialize()
+        project_authority(replay(empty_event_store.load_all()), rebuilt, embeddings)
+
+        assert _raw_authority_rows(rebuilt) == source_rows
+        assert rebuilt.authority_snapshot() == populated_repository.authority_snapshot()
+
+
 def test_export_refuses_incomplete_authoritative_history(
     populated_repository, empty_event_store,
 ):
@@ -164,6 +207,36 @@ def test_export_refuses_incomplete_authoritative_history(
     assert not (empty_event_store.root / ".supermind-migration-v1.json").exists()
 
 
+@pytest.mark.parametrize(
+    ("table", "column", "raw"),
+    [
+        ("metadata", "value", '{"revision":1,"revision":2}'),
+        ("capabilities", "facets", '{"authentication":true}'),
+        ("capabilities", "facets", '["authentication" ]'),
+    ],
+)
+def test_export_rejects_lossy_or_noncanonical_legacy_json(
+    populated_repository, empty_event_store, table, column, raw,
+):
+    if table == "metadata":
+        row = {"key": "source-registry", "value": raw}
+        key = "key"
+    else:
+        row = next(
+            item for item in populated_repository._rows(table) if item["id"] == "login"
+        )
+        row[column] = raw
+        key = "id"
+    populated_repository._table(table).merge_insert(key).when_matched_update_all().execute([row])
+
+    with pytest.raises(MigrationBlocked, match="authoritative_store_corrupt") as blocked:
+        export_embedded_store(populated_repository, empty_event_store, "caller-a")
+
+    assert blocked.value.code == "authoritative_store_corrupt"
+    assert empty_event_store.load_all() == ()
+    assert not (empty_event_store.root / ".supermind-migration-v1.json").exists()
+
+
 def test_export_preflights_the_event_file_limit_before_writing(
     populated_repository, empty_event_store,
 ):
@@ -171,11 +244,75 @@ def test_export_preflights_the_event_file_limit_before_writing(
         "oversized", {f"field-{index}": "x" * 2_000 for index in range(600)},
     )
 
-    with pytest.raises(MigrationBlocked, match="migration_event_too_large"):
+    with pytest.raises(MigrationBlocked, match="migration_source_unrepresentable") as blocked:
         export_embedded_store(populated_repository, empty_event_store, "migration-device")
 
+    assert blocked.value.code == "migration_source_unrepresentable"
     assert empty_event_store.load_all() == ()
     assert not (empty_event_store.root / ".supermind-migration-v1.json").exists()
+
+
+@pytest.mark.parametrize("metadata_key", ["contains spaces", "contains/slash"])
+def test_export_classifies_unrepresentable_legacy_entity_ids(
+    populated_repository, empty_event_store, metadata_key,
+):
+    populated_repository.set_metadata(metadata_key, {"preserve": True})
+
+    with pytest.raises(MigrationBlocked, match="migration_source_unrepresentable") as blocked:
+        export_embedded_store(populated_repository, empty_event_store, "caller-a")
+
+    assert blocked.value.code == "migration_source_unrepresentable"
+    assert empty_event_store.load_all() == ()
+
+
+def test_export_classifies_event_container_limit_without_lossy_chunking(
+    populated_repository, empty_event_store,
+):
+    populated_repository.set_metadata("many-values", list(range(1_025)))
+
+    with pytest.raises(MigrationBlocked, match="migration_source_unrepresentable") as blocked:
+        export_embedded_store(populated_repository, empty_event_store, "caller-a")
+
+    assert blocked.value.code == "migration_source_unrepresentable"
+    assert empty_event_store.load_all() == ()
+
+
+def test_export_classifies_source_text_the_event_privacy_envelope_would_change(
+    populated_repository, empty_event_store,
+):
+    row = next(
+        item for item in populated_repository._rows("capabilities") if item["id"] == "login"
+    )
+    row["summary"] = "password=unredacted-legacy-material"
+    populated_repository._table("capabilities").merge_insert("id").when_matched_update_all().execute([row])
+
+    with pytest.raises(MigrationBlocked, match="migration_source_unrepresentable") as blocked:
+        export_embedded_store(populated_repository, empty_event_store, "caller-a")
+
+    assert blocked.value.code == "migration_source_unrepresentable"
+    assert empty_event_store.load_all() == ()
+
+
+def test_export_classifies_long_demand_history_without_lossy_chunking(
+    populated_repository, empty_event_store,
+):
+    populated_repository._table("requirement_events").add(
+        [
+            populated_repository._requirement_event_row(
+                RequirementEvent(
+                    f"history-{index:04d}", "demand-1", "reviewed",
+                    "2026-09-06T12:02:00Z", reason="preserve this history",
+                )
+            )
+            for index in range(1_023)
+        ]
+    )
+
+    with pytest.raises(MigrationBlocked, match="migration_source_unrepresentable") as blocked:
+        export_embedded_store(populated_repository, empty_event_store, "caller-a")
+
+    assert blocked.value.code == "migration_source_unrepresentable"
+    assert empty_event_store.load_all() == ()
 
 
 def test_export_report_counts_each_current_entity_type(populated_repository, empty_event_store):
@@ -199,6 +336,26 @@ def test_export_report_counts_each_current_entity_type(populated_repository, emp
         event.event_id for event in empty_event_store.load_all()
     )
     assert len(journal["completed_paths"]) == 7
+
+
+def test_initiating_device_does_not_change_canonical_migration_events(
+    tmp_path, populated_repository,
+):
+    roots = (tmp_path / "caller-a", tmp_path / "caller-b")
+    for root in roots:
+        root.mkdir()
+    stores = tuple(EventStore(root) for root in roots)
+
+    first = export_embedded_store(populated_repository, stores[0], "caller-a")
+    second = export_embedded_store(populated_repository, stores[1], "caller-b")
+
+    assert first == second
+    assert tuple(event.to_bytes() for event in stores[0].load_all()) == tuple(
+        event.to_bytes() for event in stores[1].load_all()
+    )
+    assert {event.device_id for event in stores[0].load_all()} == {"migration-v1"}
+    assert json.loads((roots[0] / ".supermind-migration-v1.json").read_text())["device_id"] == "caller-a"
+    assert json.loads((roots[1] / ".supermind-migration-v1.json").read_text())["device_id"] == "caller-b"
 
 
 def test_interrupted_export_resumes_to_the_same_event_set_as_a_clean_export(
@@ -293,3 +450,35 @@ def test_altered_existing_migration_event_is_a_collision(
 
     assert blocked.value.code == "migration_event_collision"
     assert path.read_bytes() == altered.to_bytes()
+
+
+@pytest.mark.parametrize("damage", ["malformed_json", "bad_hash", "oversized", "wrong_path"])
+def test_raw_target_corruption_is_reported_as_a_migration_collision(
+    populated_repository, empty_event_store, damage,
+):
+    export_embedded_store(populated_repository, empty_event_store, "caller-a")
+    original = empty_event_store.load_all()[0]
+    path = (
+        empty_event_store.root
+        / "events"
+        / "v1"
+        / original.device_id
+        / original.occurred_at[:7]
+        / f"{original.event_id}.json"
+    )
+    if damage == "malformed_json":
+        path.write_bytes(b"{")
+    elif damage == "bad_hash":
+        document = original.to_document()
+        document["content_hash"] = "f" * 64
+        path.write_bytes(canonical_json(document) + b"\n")
+    elif damage == "oversized":
+        path.write_bytes(b"{" + b" " * MAX_EVENT_FILE_BYTES)
+    else:
+        wrong = path.with_name("wrong-event-id.json")
+        path.rename(wrong)
+
+    with pytest.raises(MigrationBlocked, match="migration_event_collision") as blocked:
+        export_embedded_store(populated_repository, empty_event_store, "caller-a")
+
+    assert blocked.value.code == "migration_event_collision"
