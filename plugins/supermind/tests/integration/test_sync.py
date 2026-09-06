@@ -22,6 +22,7 @@ from supermind_memory.git_client import (
 )
 from supermind_memory.projection import project_authority
 from supermind_memory.replay import ReplayResult, replay
+from supermind_memory.renderer import RepositoryRenderer, validate_render
 from supermind_memory.repository import CapabilityRepository
 from supermind_memory.search import CapabilitySearch
 from supermind_memory.sync import SyncBlocked, SyncCoordinator, SyncState
@@ -235,6 +236,26 @@ def test_two_devices_merge_changes_to_different_entities(devices):
         for entity_type, entity_id in device_b.replay().entities
         if entity_type == "capability"
     } == {"login", "upload"}
+
+
+def test_sync_transaction_uses_and_validates_production_repository_renderer(devices):
+    _, source, device_a, _ = devices
+    device_a.coordinator = SyncCoordinator(
+        paths=device_a.paths,
+        config=device_a.coordinator.config,
+        git=device_a.coordinator.git,
+        github=device_a.coordinator.github,
+        repository=device_a.repository,
+        embeddings=device_a.coordinator.embeddings,
+    )
+
+    assert isinstance(device_a.coordinator.renderer, RepositoryRenderer)
+
+    report = device_a.mutate(_capability_event("login", device="a", source=source))
+
+    assert "登录" not in (device_a.paths.checkout / "README.md").read_text()
+    assert "Login" in (device_a.paths.checkout / "README.md").read_text()
+    assert validate_render(device_a.paths.checkout, report.event_set_digest).event_set_digest == report.event_set_digest
 
 
 def test_two_devices_expose_sibling_updates_as_a_search_safe_conflict(devices, embeddings):

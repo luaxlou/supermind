@@ -390,6 +390,11 @@ def _markdown_text(value: object) -> str:
     return re.sub(r"(?<!\w)_(?=\S)|(?<=\S)_(?!\w)", r"\\_", text)
 
 
+def escape_markdown(value: object) -> str:
+    """Expose inert Markdown text encoding to generated repository views."""
+    return _markdown_text(value)
+
+
 def _markdown_paragraph(value: object) -> str:
     """Keep user text out of paragraph-leading Markdown constructs."""
     return "\u200b" + _markdown_text(value)
@@ -399,9 +404,14 @@ def _mermaid_node_id(identifier: str) -> str:
     return "cap_" + hashlib.sha256(identifier.encode("utf-8")).hexdigest()[:20]
 
 
+def stable_mermaid_node_id(identifier: str, *, prefix: str = "cap") -> str:
+    """Return a stable Mermaid ID without exposing the stored identifier."""
+    return f"{prefix}_" + hashlib.sha256(identifier.encode("utf-8")).hexdigest()[:20]
+
+
 def _mermaid_label(value: object) -> str:
-    text = str(value).replace("&", "&amp;")
-    return (
+    text = redact_text(str(value)).replace("&", "&amp;")
+    encoded = (
         text.replace("`", "&#96;")
         .replace("\\", "&#92;")
         .replace('"', "&#34;")
@@ -414,6 +424,14 @@ def _mermaid_label(value: object) -> str:
         .replace("\r", "")
         .replace("\n", "&#10;")
     )
+    # Mermaid treats these words as directives outside node text in some
+    # parser versions. Break the token even when hostile input changes case.
+    return re.sub(r"(?i)\b(click|callback|href)\b", lambda match: match.group(0)[0] + "&#8203;" + match.group(0)[1:], encoded)
+
+
+def escape_mermaid_label(value: object) -> str:
+    """Encode untrusted text for a quoted Mermaid node label."""
+    return _mermaid_label(value)
 
 
 def _number(value: float) -> str:

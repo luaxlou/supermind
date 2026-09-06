@@ -30,6 +30,7 @@ from supermind_memory.projection import authority_snapshot, compare_projection, 
 from supermind_memory.replay import ReplayError, ReplayResult, replay
 from supermind_memory.repository import CapabilityRepository
 from supermind_memory.redaction import redact_text
+from supermind_memory.renderer import RepositoryRenderer
 
 
 MAX_PUSH_ATTEMPTS = 3
@@ -82,7 +83,7 @@ class SyncCoordinator:
         github: GitHubClient,
         repository: CapabilityRepository,
         embeddings: EmbeddingProvider,
-        renderer: RenderPort,
+        renderer: RenderPort | None = None,
         projector: Callable[
             [ReplayResult, CapabilityRepository, EmbeddingProvider], object
         ] = project_authority,
@@ -93,7 +94,7 @@ class SyncCoordinator:
         self.github = github
         self.repository = repository
         self.embeddings = embeddings
-        self.renderer = renderer
+        self.renderer = renderer or RepositoryRenderer()
         self.projector = projector
         self.store = EventStore(paths.checkout)
         self._operation_lock = paths.locks / "sync.lock"
