@@ -41,13 +41,20 @@ class HealthManager:
         paths: MemoryPaths,
         repository: CapabilityRepository,
         embedding_provider: EmbeddingProvider,
+        *,
+        authority_mode: str | None = None,
+        expected_authority_digest: str | None = None,
     ) -> None:
         self.paths = paths
         self.repository = repository
         self.embedding_provider = embedding_provider
+        self.authority_mode = authority_mode
         self._pointer_path = paths.root / "active-generation.json"
         self._writer_lock_path = paths.locks / "writer.lock"
-        self.repository.configure_generation_reads(paths.root, required=True)
+        self.repository.configure_generation_reads(
+            paths.root, required=True, authority_mode=authority_mode,
+            expected_authority_digest=expected_authority_digest,
+        )
 
     def check(self) -> HealthReport:
         lock_path_failure = self._writer_lock_safety_failure()
@@ -170,6 +177,11 @@ class HealthManager:
                 "evaluation": evaluation,
                 "evaluation_dataset_digest": evaluation["digest"],
             }
+            # TEMPORARY Task 3 staging guard; Task 8 requires event authority.
+            if self.authority_mode == "events-v1":
+                self.repository._check_authority_binding()
+                manifest["authority_event_set_digest"] = self.repository.get_metadata("authority_event_set_digest")
+                manifest["materialized_digest"] = self.repository.get_metadata("authority_materialized_digest")
             self._write_json_fsynced(generation_dir / "manifest.json", manifest)
             _fsync_tree(generation_dir)
             _fsync_directory(self.paths.generations)
@@ -277,11 +289,12 @@ class HealthManager:
             self.repository._validate_requirement_history_unlocked()
             for row in self.repository._rows("metadata"):
                 json.loads(row["value"])
+            self.repository._check_authority_binding()
             return True
         except Exception as error:
             message = str(error)
             failures.append(redact_text(
-                message if message.startswith("authoritative_store_corrupt:") else f"source_unavailable: {message}"
+                message if message.startswith(("authoritative_store_corrupt:", "projection_mismatch:", "authority_digest_mismatch:")) else f"source_unavailable: {message}"
             ))
             return False
 
@@ -374,6 +387,10 @@ class HealthManager:
             manifest = _read_json_no_follow(manifest_path)
             if manifest.get("generation") != generation:
                 raise ValueError("generation manifest does not match pointer")
+            try:
+                self.repository._check_authority_binding(manifest)
+            except RuntimeError as error:
+                failures.append(redact_text(str(error)))
             if manifest.get("schema_version") != SCHEMA_VERSION:
                 failures.append(
                     redact_text(f"schema_version_mismatch: expected {SCHEMA_VERSION}, got {manifest.get('schema_version')}")
@@ -700,6 +717,9 @@ class HealthManager:
             "retrieval_evaluation_regression",
             "retrieval_evaluation_unavailable",
             "authoritative_store_corrupt",
+            "projection_mismatch",
+            "authority_digest_mismatch",
+            "authority_generation_stale",
         )
         for error in reversed(errors or ()):
             for code in terminal_codes:

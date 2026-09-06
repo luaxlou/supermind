@@ -86,6 +86,88 @@ def test_missing_store_is_created_and_activated(bootstrap, paths):
     assert _active_generation(paths) == report.active_generation
 
 
+def test_event_mode_binds_generation_and_rejects_non_capability_drift(paths, repo):
+    from supermind_memory.projection import project_authority
+    from supermind_memory.replay import replay
+
+    repo.initialize()
+    result = replay(())
+    project_authority(result, repo, DeterministicEmbeddingProvider())
+    manager = HealthManager(paths, repo, DeterministicEmbeddingProvider(),
+                            authority_mode="events-v1", expected_authority_digest=result.digest)
+    report = manager.ensure_healthy()
+    manifest = json.loads((paths.generations / report.active_generation / "manifest.json").read_text())
+    assert manifest["authority_event_set_digest"] == result.digest
+    assert manifest["materialized_digest"] == repo.get_metadata("authority_materialized_digest")
+    repo.set_metadata("unauthorized", {"change": True})
+    assert any("projection_mismatch" in failure for failure in manager.check().failures)
+    with pytest.raises(CapabilityMemoryBlocked, match="projection_mismatch"):
+        manager.ensure_healthy()
+    assert _active_generation(paths) == report.active_generation
+    with pytest.raises(RuntimeError, match="projection_mismatch"):
+        repo.active_generation()
+
+
+def test_event_mode_rejects_wrong_replay_digest(paths, repo):
+    from supermind_memory.projection import project_authority
+    from supermind_memory.replay import replay
+
+    repo.initialize()
+    result = replay(())
+    project_authority(result, repo, DeterministicEmbeddingProvider())
+    manager = HealthManager(paths, repo, DeterministicEmbeddingProvider(),
+                            authority_mode="events-v1", expected_authority_digest="f" * 64)
+    with pytest.raises(CapabilityMemoryBlocked, match="authority_digest_mismatch"):
+        manager.ensure_healthy()
+    assert not (paths.root / "active-generation.json").exists()
+
+
+def test_event_mode_repairs_generation_with_wrong_authority_digest(paths, repo):
+    from supermind_memory.projection import project_authority
+    from supermind_memory.replay import replay
+
+    repo.initialize()
+    result = replay(())
+    project_authority(result, repo, DeterministicEmbeddingProvider())
+    manager = HealthManager(paths, repo, DeterministicEmbeddingProvider(),
+                            authority_mode="events-v1", expected_authority_digest=result.digest)
+    initial = manager.ensure_healthy()
+    path = paths.generations / initial.active_generation / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["authority_event_set_digest"] = "f" * 64
+    path.write_text(json.dumps(manifest))
+    assert any("authority_generation_stale" in failure for failure in manager.check().failures)
+    repaired = manager.ensure_healthy()
+    assert repaired.healthy
+    assert repaired.active_generation != initial.active_generation
+
+
+def test_new_event_set_invalidates_generation_even_with_identical_capabilities(paths, repo):
+    from dataclasses import asdict
+    from supermind_memory.projection import project_authority
+    from supermind_memory.replay import replay
+    from test_projection import authority
+
+    repo.initialize()
+    base = authority("capability", "login", asdict(_capability("login")))
+    original = replay((base,))
+    provider = DeterministicEmbeddingProvider()
+    project_authority(original, repo, provider)
+    manager = HealthManager(paths, repo, provider, authority_mode="events-v1", expected_authority_digest=original.digest)
+    initial = manager.ensure_healthy()
+    update = authority("capability", "login", asdict(_capability("login")),
+                       event_id="updated", parents=(base.event_id,), operation="updated")
+    current = replay((base, update))
+    project_authority(current, repo, provider)
+    manager = HealthManager(paths, repo, provider, authority_mode="events-v1", expected_authority_digest=current.digest)
+    assert any("authority_generation_stale" in failure for failure in manager.check().failures)
+    with pytest.raises(RuntimeError, match="authority_generation_stale"):
+        repo.active_generation()
+    rebuilt = manager.ensure_healthy()
+    assert rebuilt.active_generation != initial.active_generation
+    assert rebuilt.healthy
+
+
 def test_ensure_healthy_repairs_a_completely_missing_store(paths, repo):
     health = HealthManager(paths, repo, DeterministicEmbeddingProvider())
 

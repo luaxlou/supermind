@@ -95,6 +95,20 @@ def test_sibling_updates_create_conflict(base_event, update_event):
         ("capability", "login"): (update_event.event_id, sibling.event_id),
     }
     assert ("capability", "login") not in result.entities
+    assert result.diagnostic_ancestors == {("capability", "login"): base_event}
+    with pytest.raises(TypeError):
+        result.diagnostic_ancestors[("capability", "login")] = update_event
+
+
+def test_diagnostic_ancestor_after_prior_merge_uses_deepest_common_node(base_event):
+    left = _event(event_id="left", parent_event_ids=(base_event.event_id,), operation="updated")
+    right = _event(event_id="right", parent_event_ids=(base_event.event_id,), operation="updated")
+    merged = _event(event_id="merged", parent_event_ids=("left", "right"), operation="resolved")
+    a = _event(event_id="a", parent_event_ids=("merged",), operation="updated")
+    b = _event(event_id="b", parent_event_ids=("merged",), operation="updated")
+    result = replay((b, merged, right, a, base_event, left))
+    assert result.diagnostic_ancestors == {("capability", "login"): merged}
+    assert not result.entities
 
 
 def test_resolution_must_name_every_conflicting_head(base_event, update_event):

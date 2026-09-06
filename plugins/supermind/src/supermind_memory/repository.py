@@ -10,11 +10,12 @@ import os
 import shutil
 import stat
 import threading
+import tempfile
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence, TYPE_CHECKING
 from uuid import uuid4
 
 import lancedb
@@ -56,6 +57,9 @@ from supermind_memory.types import (
     RequirementObservation,
     RequirementProfile,
 )
+
+if TYPE_CHECKING:
+    from supermind_memory.projection import AuthoritySnapshot
 
 
 _REPOSITORY_REGISTRY: set["CapabilityRepository"] = set()
@@ -156,6 +160,8 @@ class CapabilityRepository:
         self._transaction_journal_path = database_path.parent / "runtime" / "transaction-journal.json"
         self._generation_root = database_path.parent
         self._active_generation_required = False
+        self._authority_mode: str | None = None
+        self._expected_authority_digest: str | None = None
         self._connection_lock = threading.RLock()
         self._tables: dict[str, LanceTable] = {}
         self._table_markers: dict[str, tuple[int, int]] = {}
@@ -382,9 +388,80 @@ class CapabilityRepository:
             ):
                 raise RuntimeError("authoritative_store_corrupt: requirement observation has no matching link event")
 
-    def configure_generation_reads(self, root: Path, *, required: bool = True) -> None:
+    def configure_generation_reads(
+        self, root: Path, *, required: bool = True,
+        authority_mode: str | None = None, expected_authority_digest: str | None = None,
+    ) -> None:
         self._generation_root = root.expanduser().absolute()
         self._active_generation_required = required
+        self._authority_mode = authority_mode
+        self._expected_authority_digest = expected_authority_digest
+
+    def replace_authority(self, snapshot: AuthoritySnapshot, vectors: Mapping[str, Sequence[float]]) -> None:
+        """Validate a complete candidate, then activate it under the recovery journal.
+
+        Lock order is writer lock, then connection lock. Readers honoring the
+        writer lock see one complete projection; interruption between directory
+        renames restores the fsynced seven-table snapshot on the next open.
+        """
+        from supermind_memory.projection import MATERIALIZED_DIGEST_KEY, materialized_digest, snapshot_rows
+
+        rows = snapshot_rows(snapshot, vectors)
+        digest = materialized_digest(rows)
+        rows["metadata"].append({"key": MATERIALIZED_DIGEST_KEY, "value": _canonical_json(digest)})
+        with self._writer_lock():
+            self._recover_transaction_unlocked()
+            self._initialize_unlocked()
+            runtime = self._transaction_journal_path.parent
+            runtime.mkdir(parents=True, exist_ok=True)
+            candidate_root = Path(tempfile.mkdtemp(prefix="projection-", dir=runtime))
+            staging = None
+            try:
+                staging = self._prepare_transaction_unlocked(projection_candidate=candidate_root)
+                with CapabilityRepository.open(candidate_root / "database") as candidate:
+                    for name, schema in TABLE_SCHEMAS.items():
+                        candidate._overwrite_table_unlocked(name, schema, rows[name])
+                    candidate._validate_requirement_history_unlocked()
+                    if candidate._authoritative_schema_state_unlocked() != "v2":
+                        raise RuntimeError("authoritative_store_corrupt: projection schema is invalid")
+                    actual = {name: candidate._rows(name) for name in TABLE_SCHEMAS}
+                    if materialized_digest(actual) != digest:
+                        raise RuntimeError("projection_mismatch: candidate changed during serialization")
+                _fsync_tree(candidate_root)
+                with self._connection_lock:
+                    self.close()
+                    os.replace(self._database_path, candidate_root / "previous")
+                    os.replace(candidate_root / "database", self._database_path)
+                    _fsync_directory(self._database_path.parent)
+                    _fsync_directory(candidate_root)
+                    self._database = lancedb.connect(str(self._database_path))
+                    _register_repository(self)
+                    self._commit_transaction_unlocked(staging)
+            except BaseException:
+                if staging is not None:
+                    # Respect an already durable commit marker if cleanup failed.
+                    self._recover_transaction_unlocked()
+                raise
+            finally:
+                if not self._transaction_journal_path.exists() and candidate_root.exists():
+                    shutil.rmtree(candidate_root)
+
+    def _check_authority_binding(self, manifest: Mapping[str, object] | None = None) -> None:
+        # TEMPORARY Task 3 staging guard. Task 8 wires config and removes legacy authority.
+        if self._authority_mode != "events-v1":
+            return
+        from supermind_memory.projection import AUTHORITY_DIGEST_KEY, MATERIALIZED_DIGEST_KEY, materialized_digest
+
+        digest = self._get_metadata_unlocked(AUTHORITY_DIGEST_KEY)
+        if not isinstance(digest, str) or len(digest) != 64 or digest != self._expected_authority_digest:
+            raise RuntimeError("authority_digest_mismatch: replay and projection authority digests differ")
+        actual = materialized_digest({name: self._rows(name) for name in TABLE_SCHEMAS})
+        if self._get_metadata_unlocked(MATERIALIZED_DIGEST_KEY) != actual:
+            raise RuntimeError("projection_mismatch: materialized authority changed")
+        if manifest is not None and (
+            manifest.get(AUTHORITY_DIGEST_KEY) != digest or manifest.get("materialized_digest") != actual
+        ):
+            raise RuntimeError("authority_generation_stale: generation authority binding differs")
 
     def upsert_capability(self, capability: Capability, vector: Sequence[float]) -> None:
         capability = redact_capability(capability)
@@ -681,6 +758,7 @@ class CapabilityRepository:
             raise RuntimeError("active generation manifest is invalid")
         if not (generation_dir / "database").is_dir():
             raise RuntimeError("active generation database is missing")
+        self._check_authority_binding(manifest)
         if self._active_generation_required:
             source_digest, source_count = self._structured_source_fingerprint()
             model_lock_path = Path(__file__).resolve().parents[2] / "model.lock.json"
@@ -1065,7 +1143,7 @@ class CapabilityRepository:
             self._recover_transaction_unlocked()
             self._recover_incomplete_migration_unlocked()
 
-    def _prepare_transaction_unlocked(self) -> Path:
+    def _prepare_transaction_unlocked(self, *, projection_candidate: Path | None = None) -> Path:
         runtime = self._transaction_journal_path.parent
         runtime.mkdir(parents=True, exist_ok=True)
         transaction_id = uuid4().hex
@@ -1084,6 +1162,7 @@ class CapabilityRepository:
                 "transaction": transaction_id,
                 "staging": staging.name,
                 "snapshot": snapshot_metadata,
+                **({"projection_candidate": projection_candidate.name} if projection_candidate is not None else {}),
             },
         )
         os.replace(temporary, self._transaction_journal_path)
@@ -1169,6 +1248,7 @@ class CapabilityRepository:
             return
         if type(payload.get("format")) is not int or payload["format"] not in {1, 2}:
             raise RuntimeError("transaction journal is invalid")
+        self._projection_candidate_unlocked(payload)
         staging_name = payload.get("staging")
         transaction_id = payload.get("transaction")
         if (
@@ -1191,10 +1271,26 @@ class CapabilityRepository:
 
     def _clear_transaction_unlocked(self, staging: Path) -> None:
         _require_recovery_paths(self._requested_database_path, self._writer_lock_path)
+        journal = _read_json_no_follow(self._transaction_journal_path)
+        candidate = self._projection_candidate_unlocked(journal)
+        if candidate is not None and candidate.exists():
+            shutil.rmtree(candidate)
+            _fsync_directory(candidate.parent)
         self._transaction_journal_path.unlink(missing_ok=True)
         _fsync_directory(self._transaction_journal_path.parent)
         shutil.rmtree(staging, ignore_errors=True)
         _fsync_directory(self._transaction_journal_path.parent)
+
+    def _projection_candidate_unlocked(self, journal: Mapping[str, object]) -> Path | None:
+        name = journal.get("projection_candidate")
+        if name is None:
+            return None
+        if not isinstance(name, str) or not name.startswith("projection-") or Path(name).name != name:
+            raise RuntimeError("transaction projection candidate is invalid")
+        candidate = self._transaction_journal_path.parent / name
+        if candidate.exists() or candidate.is_symlink():
+            _require_real_tree(candidate, candidate.parent)
+        return candidate
 
     def _dml_count_unlocked(self) -> int:
         try:

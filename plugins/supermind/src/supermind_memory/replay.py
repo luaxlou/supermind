@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import heapq
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TypeAlias
 
@@ -25,17 +25,19 @@ class ReplayResult:
     heads: Mapping[EntityKey, tuple[str, ...]]
     conflicts: tuple[EntityConflict, ...]
     digest: str
+    diagnostic_ancestors: Mapping[EntityKey, AuthorityEvent] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "entities", MappingProxyType(dict(self.entities)))
         object.__setattr__(self, "heads", MappingProxyType(dict(self.heads)))
         object.__setattr__(self, "conflicts", tuple(self.conflicts))
+        object.__setattr__(self, "diagnostic_ancestors", MappingProxyType(dict(self.diagnostic_ancestors)))
 
 
 def replay(events: Sequence[AuthorityEvent]) -> ReplayResult:
     """Validate and replay an event set without consulting traversal or wall-clock order."""
     index = _index_events(events)
-    _validate_parent_graph(index)
+    depths = _validate_parent_graph(index)
     _reject_silent_conflict_joins(index)
 
     grouped: dict[EntityKey, set[str]] = {}
@@ -51,9 +53,14 @@ def replay(events: Sequence[AuthorityEvent]) -> ReplayResult:
     }
     entities: dict[EntityKey, AuthorityEvent] = {}
     conflicts: list[EntityConflict] = []
+    diagnostic_ancestors: dict[EntityKey, AuthorityEvent] = {}
     for key, event_ids in heads.items():
         if len(event_ids) > 1:
             conflicts.append(EntityConflict(*key, event_ids))
+            common = set.intersection(*(_ancestors(identifier, index) for identifier in event_ids))
+            if common:
+                ancestor_id = max(common, key=lambda identifier: (depths[identifier], identifier))
+                diagnostic_ancestors[key] = index[ancestor_id]
             continue
         head = index[event_ids[0]]
         if head.operation != "tombstoned":
@@ -62,7 +69,18 @@ def replay(events: Sequence[AuthorityEvent]) -> ReplayResult:
     digest = hashlib.sha256(
         canonical_json(sorted((event.event_id, event.content_hash) for event in index.values()))
     ).hexdigest()
-    return ReplayResult(entities, heads, tuple(conflicts), digest)
+    return ReplayResult(entities, heads, tuple(conflicts), digest, diagnostic_ancestors)
+
+
+def _ancestors(event_id: str, index: Mapping[str, AuthorityEvent]) -> set[str]:
+    ancestors: set[str] = set()
+    pending = list(index[event_id].parent_event_ids)
+    while pending:
+        parent = pending.pop()
+        if parent not in ancestors:
+            ancestors.add(parent)
+            pending.extend(index[parent].parent_event_ids)
+    return ancestors
 
 
 def _index_events(events: Sequence[AuthorityEvent]) -> dict[str, AuthorityEvent]:
@@ -78,7 +96,7 @@ def _index_events(events: Sequence[AuthorityEvent]) -> dict[str, AuthorityEvent]
     return index
 
 
-def _validate_parent_graph(index: Mapping[str, AuthorityEvent]) -> None:
+def _validate_parent_graph(index: Mapping[str, AuthorityEvent]) -> dict[str, int]:
     for event in index.values():
         for parent_id in event.parent_event_ids:
             parent = index.get(parent_id)
@@ -100,8 +118,10 @@ def _validate_parent_graph(index: Mapping[str, AuthorityEvent]) -> None:
     ready = [event_id for event_id, count in remaining_parents.items() if count == 0]
     heapq.heapify(ready)
     visited = 0
+    depths: dict[str, int] = {}
     while ready:
         event_id = heapq.heappop(ready)
+        depths[event_id] = max((depths[parent] + 1 for parent in index[event_id].parent_event_ids), default=0)
         visited += 1
         for child_id in children[event_id]:
             remaining_parents[child_id] -= 1
@@ -109,6 +129,7 @@ def _validate_parent_graph(index: Mapping[str, AuthorityEvent]) -> None:
                 heapq.heappush(ready, child_id)
     if visited != len(index):
         raise ReplayError("parent graph contains a cycle")
+    return depths
 
 
 def _reject_silent_conflict_joins(index: Mapping[str, AuthorityEvent]) -> None:
