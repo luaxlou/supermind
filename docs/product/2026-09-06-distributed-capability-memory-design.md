@@ -1,6 +1,6 @@
 # Distributed Capability Memory design
 
-Status: Proposed for review
+Status: Approved
 Date: 2026-09-06
 Builds on: `docs/product/2026-09-04-capability-memory-design.md`
 
