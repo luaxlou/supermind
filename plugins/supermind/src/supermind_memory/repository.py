@@ -411,7 +411,10 @@ class CapabilityRepository:
         rows["metadata"].append({"key": MATERIALIZED_DIGEST_KEY, "value": _canonical_json(digest)})
         with self._writer_lock():
             self._recover_transaction_unlocked()
-            self._initialize_unlocked()
+            # Explicit event replay replaces a disposable projection. Recover
+            # pending filesystem work, but never require the old rows to be a
+            # valid authority source. Ordinary initialize/migration stays strict.
+            self._recover_incomplete_migration_unlocked()
             runtime = self._transaction_journal_path.parent
             runtime.mkdir(parents=True, exist_ok=True)
             candidate_root = Path(tempfile.mkdtemp(prefix="projection-", dir=runtime))
@@ -421,6 +424,9 @@ class CapabilityRepository:
                 with CapabilityRepository.open(candidate_root / "database") as candidate:
                     for name, schema in TABLE_SCHEMAS.items():
                         candidate._overwrite_table_unlocked(name, schema, rows[name])
+                    for name, schema in TABLE_SCHEMAS.items():
+                        if not candidate._table(name).schema.equals(schema, check_metadata=False):
+                            raise RuntimeError(f"authoritative_store_corrupt: projection schema is invalid for {name}")
                     candidate._validate_requirement_history_unlocked()
                     if candidate._authoritative_schema_state_unlocked() != "v2":
                         raise RuntimeError("authoritative_store_corrupt: projection schema is invalid")
@@ -1152,7 +1158,9 @@ class CapabilityRepository:
         shutil.copytree(self._database_path, staging / "database")
         if self._maintenance_state_path.exists():
             shutil.copy2(self._maintenance_state_path, staging / "dml-maintenance.json")
-        snapshot_metadata = self._transaction_snapshot_metadata(staging)
+        snapshot_metadata = self._transaction_snapshot_metadata(
+            staging, derived_projection=projection_candidate is not None,
+        )
         _fsync_tree(staging)
         temporary = runtime / f".{self._transaction_journal_path.name}-{uuid4().hex}.tmp"
         _write_json_fsynced(
@@ -1162,7 +1170,10 @@ class CapabilityRepository:
                 "transaction": transaction_id,
                 "staging": staging.name,
                 "snapshot": snapshot_metadata,
-                **({"projection_candidate": projection_candidate.name} if projection_candidate is not None else {}),
+                **({
+                    "projection_candidate": projection_candidate.name,
+                    "snapshot_kind": "derived-projection-v1",
+                } if projection_candidate is not None else {}),
             },
         )
         os.replace(temporary, self._transaction_journal_path)
@@ -1185,6 +1196,7 @@ class CapabilityRepository:
         journal = _read_json_no_follow(self._transaction_journal_path)
         actual = self._transaction_snapshot_metadata(
             staging, validate=True, allow_unmarked=journal.get("format") == 1,
+            derived_projection=self._is_projection_snapshot_unlocked(journal),
         )
         if journal.get("format") == 2 and json.dumps(actual, sort_keys=True) != json.dumps(
             journal.get("snapshot"), sort_keys=True,
@@ -1210,6 +1222,7 @@ class CapabilityRepository:
     @classmethod
     def _transaction_snapshot_metadata(
         cls, staging: Path, *, validate: bool = False, allow_unmarked: bool = False,
+        derived_projection: bool = False,
     ) -> dict[str, Any]:
         """Read and prove the entire rollback image before touching the live store."""
         _require_real_tree(staging, staging.parent)
@@ -1224,6 +1237,12 @@ class CapabilityRepository:
                 raise RuntimeError("transaction snapshot contains a nonregular file")
             files[path.relative_to(staging).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
         tables = {}
+        if derived_projection:
+            # A prior disposable projection can contain broken schemas/history
+            # or unreadable tables. Prove its exact bytes for rollback without
+            # promoting those old bytes to valid authority. New candidates are
+            # independently validated before activation.
+            return {"files": files, "tables": tables}
         with cls.open(snapshot) as saved:
             if validate:
                 allowed_states = {"v2", "unmarked_v2"} if allow_unmarked else {"v2"}
@@ -1249,6 +1268,7 @@ class CapabilityRepository:
         if type(payload.get("format")) is not int or payload["format"] not in {1, 2}:
             raise RuntimeError("transaction journal is invalid")
         self._projection_candidate_unlocked(payload)
+        self._is_projection_snapshot_unlocked(payload)
         staging_name = payload.get("staging")
         transaction_id = payload.get("transaction")
         if (
@@ -1291,6 +1311,17 @@ class CapabilityRepository:
         if candidate.exists() or candidate.is_symlink():
             _require_real_tree(candidate, candidate.parent)
         return candidate
+
+    def _is_projection_snapshot_unlocked(self, journal: Mapping[str, object]) -> bool:
+        if "snapshot_kind" not in journal:
+            return False
+        if (
+            journal["snapshot_kind"] != "derived-projection-v1"
+            or journal.get("format") != 2
+            or self._projection_candidate_unlocked(journal) is None
+        ):
+            raise RuntimeError("transaction projection snapshot kind is invalid")
+        return True
 
     def _dml_count_unlocked(self) -> int:
         try:
