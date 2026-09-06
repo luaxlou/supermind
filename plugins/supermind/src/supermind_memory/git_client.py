@@ -104,12 +104,27 @@ def _require_success(result: CompletedCommand, operation: str) -> CompletedComma
 class GitClient:
     def __init__(self, runner: CommandRunner) -> None:
         self._runner = runner
+        self._redacted_attempts: list[str] = []
+
+    @property
+    def redacted_attempts(self) -> tuple[str, ...]:
+        return tuple(self._redacted_attempts)
 
     def fetch(self, checkout: Path, remote: str) -> None:
         _require_success(
             self._runner.run(("git", "fetch", "--prune", remote), cwd=checkout),
             "git_fetch_failed",
         )
+
+    def fetch_branch(self, checkout: Path, remote: str, branch: str) -> bool:
+        result = self._runner.run((
+            "git", "fetch", "--prune", remote,
+            f"refs/heads/{branch}:refs/remotes/{remote}/{branch}",
+        ), cwd=checkout)
+        if result.returncode == 0:
+            return True
+        self._redacted_attempts.append(f"git_fetch_failed: {_diagnostic(result)}")
+        return False
 
     def clone(self, clone_url: str, checkout: Path) -> None:
         _require_success(
@@ -238,6 +253,107 @@ class GitClient:
             "git_remote_ref_check_failed",
         )
         return _lines(result.stdout)
+
+    def tree_entries(self, checkout: Path, ref: str, path: str) -> dict[str, tuple[str, str]]:
+        result = _require_success(
+            self._runner.run(("git", "ls-tree", "-r", "-z", ref, "--", path), cwd=checkout),
+            "git_tree_inspection_failed",
+        )
+        entries: dict[str, tuple[str, str]] = {}
+        for record in result.stdout.split(b"\0"):
+            if not record:
+                continue
+            metadata, separator, raw_path = record.partition(b"\t")
+            fields = metadata.split()
+            if not separator or len(fields) != 3:
+                raise RepositoryInitBlocked("repository_tree_invalid")
+            try:
+                mode, kind, object_id = (field.decode("ascii") for field in fields)
+                decoded_path = raw_path.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise RepositoryInitBlocked("repository_tree_invalid") from error
+            entries[decoded_path] = (mode, object_id)
+            if kind != "blob":
+                raise RepositoryInitBlocked("repository_tree_invalid")
+        return entries
+
+    def show_file(self, checkout: Path, ref: str, path: str) -> bytes:
+        result = _require_success(
+            self._runner.run(("git", "show", f"{ref}:{path}"), cwd=checkout),
+            "git_object_read_failed",
+        )
+        return result.stdout
+
+    def ref_head(self, checkout: Path, ref: str) -> str:
+        result = _require_success(
+            self._runner.run(("git", "rev-parse", "--verify", ref), cwd=checkout),
+            "git_ref_inspection_failed",
+        )
+        revision = result.stdout.decode("ascii", errors="strict").strip()
+        if not re.fullmatch(r"[0-9a-f]{40,64}", revision):
+            raise RepositoryInitBlocked("repository_head_invalid")
+        return revision
+
+    def is_ancestor(self, checkout: Path, ancestor: str, descendant: str) -> bool:
+        result = self._runner.run(
+            ("git", "merge-base", "--is-ancestor", ancestor, descendant), cwd=checkout,
+        )
+        if result.returncode in (0, 1):
+            return result.returncode == 0
+        raise CommandFailed(f"git_ancestry_check_failed: {_diagnostic(result)}")
+
+    def commit_all(
+        self,
+        checkout: Path,
+        branch: str,
+        remote_head: str,
+        message: str,
+    ) -> str:
+        _require_success(
+            self._runner.run(("git", "add", "--all", "--", "."), cwd=checkout),
+            "git_stage_failed",
+        )
+        tree = _require_success(
+            self._runner.run(("git", "write-tree"), cwd=checkout),
+            "git_write_tree_failed",
+        ).stdout.decode("ascii").strip()
+        local_head = self.head(checkout)
+        if self.is_ancestor(checkout, remote_head, local_head):
+            parents = (local_head,)
+        elif self.is_ancestor(checkout, local_head, remote_head):
+            parents = (remote_head,)
+        else:
+            parents = (local_head, remote_head)
+        parent_tree = self.ref_head(checkout, f"{parents[0]}^{{tree}}")
+        if len(parents) == 1 and tree == parent_tree:
+            commit_id = parents[0]
+        else:
+            parent_args = tuple(item for parent in parents for item in ("-p", parent))
+            commit_id = _require_success(
+                self._runner.run((
+                    "git", "-c", "user.name=Supermind Memory",
+                    "-c", "user.email=supermind-memory@users.noreply.github.com",
+                    "commit-tree", tree, *parent_args, "-m", message,
+                ), cwd=checkout),
+                "git_commit_failed",
+            ).stdout.decode("ascii").strip()
+        _require_success(
+            self._runner.run((
+                "git", "update-ref", f"refs/heads/{branch}", commit_id, local_head,
+            ), cwd=checkout),
+            "git_update_ref_failed",
+        )
+        return commit_id
+
+    def push(self, checkout: Path, remote: str, branch: str) -> bool:
+        result = self._runner.run((
+            "git", "push", remote,
+            f"refs/heads/{branch}:refs/heads/{branch}",
+        ), cwd=checkout)
+        if result.returncode == 0:
+            return True
+        self._redacted_attempts.append(f"git_push_failed: {_diagnostic(result)}")
+        return False
 
 
 def _lines(raw: bytes) -> tuple[str, ...]:
