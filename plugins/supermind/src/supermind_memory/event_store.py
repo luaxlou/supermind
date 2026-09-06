@@ -13,7 +13,7 @@ from supermind_memory.event_model import AuthorityEvent
 MAX_EVENT_FILE_BYTES = 1_048_576
 
 _DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW
+_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 _WRITE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
 
 
