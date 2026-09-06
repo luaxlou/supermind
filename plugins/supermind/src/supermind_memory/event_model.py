@@ -29,10 +29,8 @@ _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _UTC_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z")
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_PAYLOAD_DEPTH = 16
-# Structural limits are mirrored by the v1 JSON Schema.  The UTF-8 byte limit
-# is an input-transport safety boundary and intentionally remains decoder-only.
 _MAX_CONTAINER_ITEMS = 1_024
-_MAX_PAYLOAD_BYTES = 256 * 1024
+_MAX_PAYLOAD_STRING_LENGTH = 65_536
 _MAX_PARENT_EVENT_IDS = 1_024
 _MARKER_TEXT = re.compile(r"\S(?:.*\S)?\Z")
 
@@ -392,16 +390,17 @@ def _validate_payload(value: object) -> dict[str, JSONValue]:
     if type(value) is not dict:
         raise EventValidationError("payload must be a JSON object")
     _validate_json_value(value, depth=0)
-    payload = dict(value)
-    if len(canonical_json(payload)) > _MAX_PAYLOAD_BYTES:
-        raise EventValidationError("payload is too large")
-    return payload  # type: ignore[return-value]
+    return dict(value)  # type: ignore[return-value]
 
 
 def _validate_json_value(value: object, *, depth: int) -> None:
     if depth > _MAX_PAYLOAD_DEPTH:
         raise EventValidationError("payload is nested too deeply")
-    if value is None or type(value) in {bool, int, str}:
+    if value is None or type(value) in {bool, int}:
+        return
+    if type(value) is str:
+        if len(value) > _MAX_PAYLOAD_STRING_LENGTH:
+            raise EventValidationError("payload string is too long")
         return
     if type(value) is float:
         if not math.isfinite(value):

@@ -18,7 +18,7 @@
   },
   "$defs": {
     "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
-    "jsonScalar": {"anyOf": [{"type": "null"}, {"type": "boolean"}, {"type": "number"}, {"type": "string"}]},
+    "jsonScalar": {"anyOf": [{"type": "null"}, {"type": "boolean"}, {"type": "number"}, {"type": "string", "maxLength": 65536}]},
     "jsonValue1": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue2"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue2"}}]},
     "jsonValue2": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue3"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue3"}}]},
     "jsonValue3": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue4"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue4"}}]},

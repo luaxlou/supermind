@@ -300,6 +300,18 @@ def test_standard_schema_and_decoder_agree_on_parent_count_boundary(count, accep
             AuthorityEvent.from_bytes(canonical_json(document))
 
 
-def test_decoder_retains_a_utf8_transport_size_boundary_outside_schema_structure():
-    with pytest.raises(EventValidationError, match="too large"):
-        _event(payload={"value": "中" * 100_000})
+@pytest.mark.parametrize(
+    ("length", "accepted"),
+    [(65_536, True), (65_537, False), (100_000, False)],
+)
+def test_standard_schema_and_decoder_agree_on_payload_string_length(length, accepted):
+    schema_root = Path(__file__).parents[2] / "schemas" / "v1"
+    event_schema = json.loads((schema_root / "event.schema.json").read_text())
+    document = _event_document_with_payload({"value": "中" * length})
+
+    assert Draft202012Validator(event_schema).is_valid(document) is accepted
+    if accepted:
+        assert AuthorityEvent.from_bytes(canonical_json(document)).to_document() == document
+    else:
+        with pytest.raises(EventValidationError):
+            AuthorityEvent.from_bytes(canonical_json(document))
