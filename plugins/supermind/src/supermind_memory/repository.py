@@ -452,6 +452,101 @@ class CapabilityRepository:
                 if not self._transaction_journal_path.exists() and candidate_root.exists():
                     shutil.rmtree(candidate_root)
 
+    def authority_snapshot(self) -> AuthoritySnapshot:
+        """Return one validated, stable-ID snapshot of legacy schema-v2 authority."""
+        from supermind_memory.projection import AuthoritySnapshot, _RESERVED_METADATA
+
+        with self._writer_lock():
+            try:
+                if self._authoritative_schema_state_unlocked() != "v2":
+                    raise RuntimeError(
+                        "authoritative_store_corrupt: migration source is not schema v2"
+                    )
+                for name, schema in TABLE_SCHEMAS.items():
+                    if not self._table(name).schema.equals(schema, check_metadata=False):
+                        raise RuntimeError(
+                            f"authoritative_store_corrupt: {name} schema is not canonical v2"
+                        )
+                self._validate_requirement_history_unlocked()
+                self._read_evidence_order_unlocked(require_complete=True)
+
+                collections = {
+                    "capabilities": tuple(
+                        sorted(
+                            (self._capability_from_row(row) for row in self._rows("capabilities")),
+                            key=lambda item: item.id,
+                        )
+                    ),
+                    "evidence": tuple(
+                        sorted(
+                            (self._evidence_from_row(row) for row in self._rows("evidence")),
+                            key=lambda item: item.id,
+                        )
+                    ),
+                    "relationships": tuple(
+                        sorted(
+                            (self._relationship_from_row(row) for row in self._rows("relationships")),
+                            key=lambda item: item.id,
+                        )
+                    ),
+                    "events": tuple(
+                        sorted(
+                            (self._event_from_row(row) for row in self._rows("events")),
+                            key=lambda item: item.id,
+                        )
+                    ),
+                    "requirement_observations": tuple(
+                        sorted(
+                            (
+                                self._requirement_observation_from_row(row)
+                                for row in self._rows("requirement_observations")
+                            ),
+                            key=lambda item: item.id,
+                        )
+                    ),
+                    "requirement_events": tuple(
+                        sorted(
+                            (
+                                self._requirement_event_from_row(row)
+                                for row in self._rows("requirement_events")
+                            ),
+                            key=lambda item: item.id,
+                        )
+                    ),
+                }
+                for name, records in collections.items():
+                    identifiers = tuple(item.id for item in records)
+                    if len(identifiers) != len(set(identifiers)):
+                        raise RuntimeError(
+                            f"authoritative_store_corrupt: duplicate IDs in {name}"
+                        )
+                for evidence in collections["evidence"]:
+                    validate_evidence(evidence)
+
+                metadata_rows = self._rows("metadata")
+                metadata_keys = tuple(str(row["key"]) for row in metadata_rows)
+                if len(metadata_keys) != len(set(metadata_keys)):
+                    raise RuntimeError(
+                        "authoritative_store_corrupt: duplicate metadata keys"
+                    )
+                metadata = tuple(
+                    sorted(
+                        (
+                            (str(row["key"]), _canonical_json(json.loads(row["value"])))
+                            for row in metadata_rows
+                            if row["key"] not in _RESERVED_METADATA
+                        ),
+                        key=lambda item: item[0],
+                    )
+                )
+                return AuthoritySnapshot(**collections, metadata=metadata)
+            except RuntimeError:
+                raise
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                raise RuntimeError(
+                    f"authoritative_store_corrupt: invalid authoritative row: {error}"
+                ) from error
+
     def _check_authority_binding(self, manifest: Mapping[str, object] | None = None) -> None:
         # TEMPORARY Task 3 staging guard. Task 8 wires config and removes legacy authority.
         if self._authority_mode != "events-v1":
