@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import hashlib
+import json
 from pathlib import PurePosixPath
 
 import pytest
@@ -69,6 +71,29 @@ def test_invalid_prior_manifest_never_authorizes_deletion(tmp_path):
     write_rendered_repository(tmp_path, render_files(_result(None)))
 
     assert (tmp_path / "capabilities/login.md").is_file()
+
+
+def test_prior_manifest_cannot_claim_schema_event_or_user_paths_for_deletion(tmp_path):
+    first = _result("login")
+    write_rendered_repository(tmp_path, render_files(first))
+    protected = {
+        "schemas/capability.json": b"schema\n",
+        "events/v1/device/2026-09/event.json": b"event\n",
+        "notes/private.md": b"user\n",
+    }
+    manifest_path = tmp_path / ".supermind/render-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    for relative, content in protected.items():
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+        manifest["files"][relative] = hashlib.sha256(content).hexdigest()
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n")
+
+    write_rendered_repository(tmp_path, render_files(_result(None)))
+
+    for relative, content in protected.items():
+        assert (tmp_path / relative).read_bytes() == content
 
 
 def test_rendering_is_byte_identical_and_manifest_valid(tmp_path):

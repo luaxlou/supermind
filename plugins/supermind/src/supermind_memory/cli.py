@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import math
@@ -199,7 +200,7 @@ def main(
                 try:
                     if service_factory is _DEFAULT_SERVICE_FACTORY:
                         # Resolve the global name so tests and embedders can replace the factory.
-                        if arguments.command == "init":
+                        if arguments.command in {"init", "migrate"}:
                             _initialize_repository_command(arguments, data_home)
                         memory = build_service(data_home=data_home)
                     else:
@@ -345,7 +346,7 @@ def _parser() -> _ArgumentParser:
 
     initialize = commands.add_parser("init")
     initialize.add_argument("--project-root", required=True)
-    repository = initialize.add_mutually_exclusive_group(required=True)
+    repository = initialize.add_mutually_exclusive_group()
     repository.add_argument("--repo")
     repository.add_argument("--create-private", action="store_true")
     initialize.add_argument("--name", default="supermind-memory")
@@ -585,7 +586,8 @@ def _initialize_repository_command(arguments: argparse.Namespace, data_home: Pat
     paths = MemoryPaths.from_codex_home(codex_home)
     runner = SubprocessCommandRunner()
     repository = arguments.repo
-    if arguments.create_private:
+    create_private = getattr(arguments, "create_private", False)
+    if create_private:
         owner_result = runner.run(("gh", "api", "user", "--jq", ".login"))
         if owner_result.returncode != 0:
             raise CapabilityMemoryBlocked("github_identity_unavailable", "cannot resolve GitHub owner", ())
@@ -595,11 +597,15 @@ def _initialize_repository_command(arguments: argparse.Namespace, data_home: Pat
             raise InvalidInput("GitHub owner is not valid UTF-8") from error
         repository = f"{owner}/{arguments.name}"
     if not repository:
-        raise InvalidInput("init requires --repo or --create-private")
+        if not paths.config.exists():
+            raise CapabilityMemoryBlocked(
+                "memory_repository_unconfigured", "choose a private memory repository", (),
+            )
+        return RepositoryConfig.read(paths.config)
     device_seed = hashlib.sha256(str(paths.root).encode()).hexdigest()[:24]
     try:
         return initialize_repository(
-            InitRequest(repository, f"device-{device_seed}", arguments.create_private, runner), paths,
+            InitRequest(repository, f"device-{device_seed}", create_private, runner), paths,
         )
     except Exception as error:
         if isinstance(error, CapabilityMemoryBlocked):

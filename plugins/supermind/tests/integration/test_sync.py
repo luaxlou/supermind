@@ -556,6 +556,66 @@ def test_local_projector_failure_commits_event_before_projection_and_next_sync_r
     assert device_a.sync().sync_state is SyncState.SYNCED
 
 
+def test_batch_append_failure_rolls_back_every_event_in_the_command(devices, monkeypatch):
+    _, source, device_a, _ = devices
+    events = (
+        _capability_event("login", device="a", source=source),
+        _capability_event("upload", device="a", source=source),
+    )
+    original_append = device_a.coordinator.store.append
+    appended = 0
+
+    def fail_second_append(event):
+        nonlocal appended
+        appended += 1
+        if appended == 2:
+            raise RuntimeError("second append failed")
+        return original_append(event)
+
+    monkeypatch.setattr(device_a.coordinator.store, "append", fail_second_append)
+
+    with pytest.raises(SyncBlocked, match="materialization_failed"):
+        device_a.coordinator.mutate_batch(lambda _: events)
+
+    assert device_a.store.load_all() == ()
+    assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+
+
+def test_migration_commit_failure_preserves_staged_journal_and_retries_cleanly(devices):
+    _, source, device_a, device_b = devices
+    legacy = device_b.repository
+    legacy.upsert_capability(_capability("login", source), [0.0] * 384)
+    before = legacy.authority_snapshot()
+    device_a.runner.fail_commit_tree = True
+
+    with pytest.raises(SyncBlocked, match="materialization_failed"):
+        device_a.coordinator.migrate(legacy)
+
+    assert device_a.store.load_all() == ()
+    assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+    journal = device_a.paths.root / "migration-stage" / ".supermind-migration-v1.json"
+    assert journal.is_file()
+    journal_bytes = journal.read_bytes()
+    device_a.runner.fail_commit_tree = False
+    migrated, report = device_a.coordinator.migrate(legacy)
+    assert report.sync_state is SyncState.SYNCED
+    assert migrated.equivalent
+    assert journal.read_bytes() == journal_bytes
+    assert legacy.authority_snapshot() == before
+    assert not (device_a.paths.checkout / journal.name).exists()
+    assert device_a.repository.get_capability("login") is not None
+    assert device_a.coordinator.migrate(legacy)[0] == migrated
+
+
+def test_migration_reconciles_remote_before_enforcing_empty_target(devices):
+    _, source, device_a, device_b = devices
+    device_b.mutate(_capability_event("remote", device="b", source=source))
+    with pytest.raises(SyncBlocked, match="migration_target_not_empty"):
+        device_a.coordinator.migrate(device_a.repository)
+    assert device_a.repository.get_capability("remote") is not None
+    assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+
+
 def test_embedding_failure_commits_authority_then_projection_recovers_on_sync(devices):
     _, source, device_a, _ = devices
     event = _capability_event("login", device="a", source=source)

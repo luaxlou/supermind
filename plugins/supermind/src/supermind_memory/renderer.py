@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from supermind_memory.event_model import canonical_json
 from supermind_memory.explorer import escape_markdown, escape_mermaid_label, stable_mermaid_node_id
@@ -36,6 +36,14 @@ LIFECYCLE_LABEL = {
     Lifecycle.VERIFIED: "已验证", Lifecycle.RECOMMENDED: "推荐复用",
     Lifecycle.DEGRADED: "需维护", Lifecycle.RETIRED: "已退役",
 }
+_FIXED_RENDER_PATHS = frozenset({
+    PurePosixPath("README.md"),
+    PurePosixPath("catalog/README.md"),
+    *(PurePosixPath(f"catalog/{value[1]}.md") for value in CATEGORIES.values()),
+    PurePosixPath("demands/open.md"),
+    PurePosixPath("demands/resolved.md"),
+    PurePosixPath("relationships.md"),
+})
 
 
 class RenderBlocked(RuntimeError):
@@ -309,7 +317,7 @@ def _manifest_from_bytes(raw: bytes) -> RenderManifest:
             path = PurePosixPath(relative)
             if (type(relative) is not str or type(digest) is not str
                     or not _SHA256.fullmatch(digest) or path.is_absolute()
-                    or ".." in path.parts or path == MANIFEST_PATH):
+                    or ".." in path.parts or not _is_renderer_owned_output(path)):
                 raise ValueError("invalid file entry")
         return RenderManifest(document["renderer_version"], document["event_set_digest"], document["files"])
     except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
@@ -373,6 +381,18 @@ def _atomic_write(root: Path, relative: PurePosixPath, data: bytes) -> None:
 
 def _capability_path(identifier: str) -> PurePosixPath:
     return PurePosixPath("capabilities", quote(identifier, safe="-._~") + ".md")
+
+
+def _is_renderer_owned_output(path: PurePosixPath) -> bool:
+    if path in _FIXED_RENDER_PATHS:
+        return True
+    if len(path.parts) != 2 or path.parts[0] != "capabilities":
+        return False
+    filename = path.parts[1]
+    if not filename.endswith(".md") or filename == ".md":
+        return False
+    encoded = filename[:-3]
+    return quote(unquote(encoded), safe="-._~") == encoded
 
 
 def _source_description(item: Capability) -> str:

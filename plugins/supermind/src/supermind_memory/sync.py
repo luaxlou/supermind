@@ -19,6 +19,7 @@ from supermind_memory.config import MemoryPaths, RepositoryConfig
 from supermind_memory.embeddings import EmbeddingProvider
 from supermind_memory.event_model import AuthorityEvent, EventValidationError, MemoryMarker
 from supermind_memory.event_store import EventStore, EventStoreError
+from supermind_memory.migration import export_embedded_store, MigrationReport
 from supermind_memory.git_client import (
     CommandFailed,
     GitClient,
@@ -108,6 +109,12 @@ class SyncCoordinator:
         self._operation_lock = paths.locks / "sync.lock"
 
     def mutate(self, create_event: Callable[[ReplayResult], AuthorityEvent]) -> SyncReport:
+        return self.mutate_batch(lambda current: (create_event(current),))
+
+    def mutate_batch(
+        self,
+        create_events: Callable[[ReplayResult], Sequence[AuthorityEvent]],
+    ) -> SyncReport:
         self._validate_owned_paths()
         with FileLock(str(self._operation_lock), timeout=30):
             current = self._validate_local_checkout()
@@ -117,8 +124,8 @@ class SyncCoordinator:
                 current = replay(self.store.load_all())
             else:
                 self._require_healthy_projection(current)
-                return self._commit_mutation(current, create_event, online=False)
-            return self._commit_mutation(current, create_event, online=online)
+                return self._commit_mutation(current, create_events, online=False)
+            return self._commit_mutation(current, create_events, online=online)
 
     def synchronize(self) -> SyncReport:
         self._validate_owned_paths()
@@ -139,6 +146,27 @@ class SyncCoordinator:
                 )
             result = replay(self.store.load_all())
             return self._report(SyncState.SYNCED, result, self.git.head(self.paths.checkout))
+
+    def migrate(self, legacy: CapabilityRepository) -> tuple[MigrationReport, SyncReport]:
+        """Journal the export outside authority, then commit it under the mutation lock."""
+        migration_report = None
+
+        def create_events(current: ReplayResult) -> Sequence[AuthorityEvent]:
+            nonlocal migration_report
+            stage = self.paths.root / "migration-stage"
+            if stage.is_symlink():
+                raise SyncBlocked("migration_stage_unsafe")
+            stage.mkdir(exist_ok=True)
+            staged_store = EventStore(stage)
+            migration_report = export_embedded_store(legacy, staged_store, self.config.device_id)
+            events = staged_store.load_all()
+            if current.entities and current.digest != replay(events).digest:
+                raise SyncBlocked("migration_target_not_empty")
+            return events
+
+        report = self.mutate_batch(create_events)
+        assert migration_report is not None
+        return migration_report, report
 
     def render_repository(self) -> SyncReport:
         """Regenerate and commit the deterministic browser from event authority."""
@@ -377,17 +405,17 @@ class SyncCoordinator:
     def _commit_mutation(
         self,
         current: ReplayResult,
-        create_event: Callable[[ReplayResult], AuthorityEvent],
+        create_events: Callable[[ReplayResult], Sequence[AuthorityEvent]],
         *,
         online: bool,
     ) -> SyncReport:
         if current.conflicts:
             raise SyncBlocked("authority_conflict")
-        event = create_event(current)
-        if not isinstance(event, AuthorityEvent):
+        events = tuple(create_events(current))
+        if any(not isinstance(event, AuthorityEvent) for event in events):
             raise SyncBlocked("authority_event_invalid")
         try:
-            result = replay((*self.store.load_all(), event))
+            result = replay((*self.store.load_all(), *events))
         except (EventStoreError, ReplayError) as error:
             raise SyncBlocked("authority_corrupt", (str(error),)) from error
         remote_head = self.config.last_checked_remote_head
@@ -396,9 +424,9 @@ class SyncCoordinator:
         commit_id = self._materialize_commit(
             current,
             result,
-            (event,),
+            events,
             remote_head,
-            f"Record Supermind memory event {event.event_id}",
+            f"Record {len(events)} Supermind memory event(s)",
         )
         report = self._report(SyncState.COMMITTED, result, commit_id)
         if result.conflicts:
@@ -423,7 +451,7 @@ class SyncCoordinator:
                 result,
                 incoming,
                 remote_head,
-                f"Reconcile Supermind memory event {event.event_id}",
+                "Reconcile Supermind memory event batch",
             )
             if result.conflicts:
                 conflicts = tuple(
@@ -451,6 +479,9 @@ class SyncCoordinator:
             for event in additions:
                 self.store.append(event)
         except Exception as error:
+            for path, existed in zip(event_paths, event_existed, strict=True):
+                if not existed:
+                    path.unlink(missing_ok=True)
             raise SyncBlocked("materialization_failed", (str(error),)) from error
         try:
             self.projector(result, self.repository, self.embeddings)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,7 +15,7 @@ from supermind_memory.renderer import RepositoryRenderer
 from supermind_memory.service import CapabilityMemory
 from supermind_memory.sync import SyncReport, SyncState
 from supermind_memory.types import (
-    ArtifactType, Capability, Evidence, HealthReport, Lifecycle,
+    ArtifactType, Capability, DiscoveryContext, DiscoveryResult, Evidence, HealthReport, Lifecycle,
     RequirementProfile, ReuseResult,
 )
 
@@ -38,11 +38,17 @@ class LocalEventTransactions:
             repository="owner/memory", web_url="https://github.com/owner/memory",
         )
         self.paths = SimpleNamespace(checkout=root)
+        self.transaction_count = 0
 
     def mutate(self, create_event):
+        return self.mutate_batch(lambda current: (create_event(current),))
+
+    def mutate_batch(self, create_events):
+        self.transaction_count += 1
         current = replay(self.store.load_all())
-        event = create_event(current)
-        self.store.append(event)
+        events = tuple(create_events(current))
+        for event in events:
+            self.store.append(event)
         result = replay(self.store.load_all())
         project_authority(result, self.repository, self.embeddings)
         return SyncReport(SyncState.COMMITTED, "b" * 40, result.digest, "a" * 40)
@@ -94,6 +100,7 @@ def test_register_uses_events_without_calling_direct_repository_writers(event_me
         supporting_uri=None,
     )
     stored = memory.register(_capability(source), (proof,))
+    assert transactions.transaction_count == 1
     demand = memory.observe_unmet_requirement(
         RequirementProfile("req-login", "project-b", "Need login")
     )
@@ -119,6 +126,29 @@ def test_service_rejects_non_event_authority_mode(tmp_path):
         )
 
 
+def test_discovery_commits_all_capabilities_in_one_transaction(event_memory, tmp_path):
+    memory, transactions = event_memory
+    source = tmp_path / "login.py"
+    source.write_text("def login(): pass\n")
+    first = _capability(source)
+    second = replace(first, id="auth.logout", name="Logout")
+    discovered = DiscoveryResult((first, second), (str(tmp_path),))
+    memory.discovery_engine = SimpleNamespace(discover=lambda _: discovered)
+    result = memory._discover_and_persist(DiscoveryContext(tmp_path, tmp_path / "codex"))
+    assert {item.id for item in result.capabilities} == {first.id, second.id}
+    assert transactions.transaction_count == 1
+    assert len(transactions.store.load_all()) == 2
+
+
+def test_service_rejects_missing_event_coordinator(tmp_path):
+    with pytest.raises(ValueError, match="event_authority_unavailable"):
+        CapabilityMemory(
+            bootstrap=SimpleNamespace(), discovery=SimpleNamespace(), repository=SimpleNamespace(),
+            search_engine=SimpleNamespace(), embedding_provider=SimpleNamespace(),
+            health_manager=Healthy(), codex_home=tmp_path, authority_mode="events-v1",
+        )
+
+
 def test_open_validates_render_then_preserves_repository_as_one_argv_item(
     event_memory, tmp_path, monkeypatch,
 ):
@@ -130,7 +160,12 @@ def test_open_validates_render_then_preserves_repository_as_one_argv_item(
     result = replay(transactions.store.load_all())
     RepositoryRenderer().render(result, transactions.paths.checkout)
     report = SyncReport(SyncState.SYNCED, "b" * 40, result.digest, "a" * 40)
-    monkeypatch.setattr(memory, "sync", lambda: report)
+    def render():
+        RepositoryRenderer().render(result, transactions.paths.checkout)
+        return report
+
+    (transactions.paths.checkout / "README.md").write_text("stale browser")
+    monkeypatch.setattr(memory, "render", render)
 
     calls = []
 

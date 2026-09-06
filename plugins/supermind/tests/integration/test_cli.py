@@ -1601,6 +1601,28 @@ def test_build_service_requires_initialized_event_repository(tmp_path, monkeypat
     assert captured.value.code == "repository_not_initialized"
 
 
+def test_plain_init_reports_missing_repository_configuration(tmp_path, capsys):
+    code = main([
+        "--data-home", str(tmp_path), "init", "--project-root", str(tmp_path),
+        "--format", "json",
+    ])
+    assert code == 3
+    assert json.loads(capsys.readouterr().err)["code"] == "memory_repository_unconfigured"
+
+
+def test_plain_init_reuses_existing_repository_configuration(tmp_path, monkeypatch):
+    from argparse import Namespace
+    from supermind_memory.cli import _initialize_repository_command
+    from supermind_memory.config import MemoryPaths, RepositoryConfig
+
+    paths = MemoryPaths.from_codex_home(tmp_path)
+    paths.config.parent.mkdir(parents=True)
+    paths.config.touch()
+    existing = object()
+    monkeypatch.setattr(RepositoryConfig, "read", lambda _: existing)
+    assert _initialize_repository_command(Namespace(repo=None, create_private=False), tmp_path) is existing
+
+
 def test_launcher_rejects_owned_directory_symlink_before_exec(tmp_path):
     launcher = Path(__file__).resolve().parents[2] / "scripts" / "capability-memory"
     plugin_root = launcher.parent.parent
