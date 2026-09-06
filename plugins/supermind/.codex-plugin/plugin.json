@@ -1,25 +1,39 @@
 {
   "name": "supermind",
-  "version": "0.1.0",
-  "description": "A smart product-development brain that orchestrates Superpowers.",
+  "version": "0.1.0+codex.local-20260904-163752",
+  "description": "Product development with automatic, evidence-backed capability reuse.",
   "author": {
     "name": "Supermind contributors"
   },
   "homepage": "https://github.com/luaxlou/supermind",
   "repository": "https://github.com/luaxlou/supermind",
-  "keywords": ["product-development", "superpowers", "codex", "agent"],
+  "keywords": [
+    "product-development",
+    "orchestration",
+    "capability-memory",
+    "reuse",
+    "codex",
+    "agent"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Supermind",
-    "shortDescription": "Smart product development with Superpowers",
-    "longDescription": "Understand product intent, choose the next action, involve the human only for meaningful product decisions, and call the right Superpowers capability at the right time.",
+    "shortDescription": "Product development with automatic reuse",
+    "longDescription": "Turn product intent into working software while automatically discovering and evaluating verified capabilities. Exact contract matches are reused, partial matches are adapted, and incompatible high-similarity results are rejected. Inspect the local evidence-backed library as readable catalogs, detail cards, decisions, and relationship graphs.",
     "developerName": "Supermind contributors",
     "category": "Developer Tools",
-    "capabilities": ["Product intent", "Adaptive execution", "Superpowers orchestration"],
+    "capabilities": [
+      "Product intent",
+      "Automatic capability reuse",
+      "Evidence-backed decisions",
+      "Capability Explorer",
+      "Adaptive execution"
+    ],
     "defaultPrompt": [
       "Use Supermind to build this product intent.",
       "Use Supermind to add this feature.",
-      "Use Supermind to improve this product."
+      "Use Supermind to improve this product.",
+      "Use Supermind to show the capability library."
     ]
   }
 }

@@ -1,6 +1,6 @@
 interface:
   display_name: "Supermind"
-  short_description: "Smart product development with Superpowers"
+  short_description: "Autonomous product development from intent"
   default_prompt: "Use $supermind to turn this product intent into working software."
 
 policy:

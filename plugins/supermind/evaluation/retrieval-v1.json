@@ -1,0 +1,47 @@
+{
+  "id": "retrieval-evaluation-v1",
+  "version": 1,
+  "ranking_k": 3,
+  "thresholds": {
+    "semantic_recall": 1.0,
+    "hybrid_recall": 1.0,
+    "hard_negative_accuracy": 1.0,
+    "filter_accuracy": 1.0
+  },
+  "corpus": [
+    {"id": "eval-oauth-login", "name": "OAuth login", "summary": "Reusable OAuth 2.0 authorization-code login", "contract": "authentication mode must be oauth", "runtime": ["python"], "platform": ["linux"], "license": "Apache-2.0", "stack": ["fastapi"], "category_path": ["Code and components"]},
+    {"id": "eval-password-login", "name": "Password authentication", "summary": "Reusable password login", "contract": "authentication mode must be password", "runtime": ["node.js"], "platform": ["windows"], "license": "GPL-3.0", "stack": ["express"], "category_path": ["Engineering and methods"]},
+    {"id": "eval-aes-storage", "name": "Encrypted storage", "summary": "Persist private records with AES 256 protection", "contract": "must use AES 256 encryption at rest", "runtime": ["python"], "platform": ["linux"], "license": "Apache-2.0", "stack": ["fastapi"], "category_path": ["Code and components"]},
+    {"id": "eval-plaintext-storage", "name": "Unencrypted storage", "summary": "Persist private records without AES 256 protection", "contract": "must not use AES 256 encryption", "runtime": ["python"], "platform": ["linux"], "license": "Apache-2.0", "stack": ["fastapi"], "category_path": ["Code and components"]},
+    {"id": "eval-current-python", "name": "Current Python runtime", "summary": "Python component compatible with current interpreters", "contract": "supports Python >=3.12,<4", "runtime": ["python"], "platform": ["linux"], "license": "Apache-2.0", "stack": ["fastapi"], "category_path": ["Code and components"]},
+    {"id": "eval-legacy-python", "name": "Legacy Python runtime", "summary": "Python component requiring older interpreters", "contract": "supports Python >=3.9,<3.11", "runtime": ["python"], "platform": ["linux"], "license": "Apache-2.0", "stack": ["fastapi"], "category_path": ["Code and components"]},
+    {"id": "eval-jwt-login", "name": "JWT login", "summary": "Issue signed tokens after login", "contract": "returns a JWT bearer token", "runtime": ["python"], "platform": ["linux"], "license": "Apache-2.0", "stack": ["fastapi"], "category_path": ["Code and components"]}
+  ],
+  "evidence": [
+    {"id": "edge-jwt-pass", "capability_id": "eval-jwt-login", "source_project": "jwt-integration", "outcome": "passed", "observed_at": "2026-09-06T00:00:00Z"},
+    {"id": "edge-python-pass", "capability_id": "eval-current-python", "source_project": "python-integration", "outcome": "passed", "observed_at": "2026-09-06T00:00:00Z"},
+    {"id": "edge-password-failed", "capability_id": "eval-password-login", "source_project": "password-integration", "outcome": "failed", "observed_at": "2026-09-06T00:00:00Z"},
+    {"id": "edge-aes-stale", "capability_id": "eval-aes-storage", "source_project": "aes-integration", "outcome": "passed", "observed_at": "2026-09-05T00:00:00Z"},
+    {"id": "edge-aes-current", "capability_id": "eval-aes-storage", "source_project": "aes-integration", "outcome": "failed", "observed_at": "2026-09-06T00:00:00Z"}
+  ],
+  "relationships": [
+    {"id": "oauth-jwt", "source_id": "eval-oauth-login", "target_id": "eval-jwt-login", "relationship_type": "dependency", "evidence_ids": ["edge-jwt-pass"]},
+    {"id": "oauth-python", "source_id": "eval-oauth-login", "target_id": "eval-current-python", "relationship_type": "consumer", "evidence_ids": ["edge-python-pass"]},
+    {"id": "oauth-password", "source_id": "eval-oauth-login", "target_id": "eval-password-login", "relationship_type": "alternative", "evidence_ids": ["edge-password-failed"]},
+    {"id": "oauth-aes", "source_id": "eval-oauth-login", "target_id": "eval-aes-storage", "relationship_type": "composition", "evidence_ids": ["edge-aes-stale"]}
+  ],
+  "queries": [
+    {"id": "semantic-login", "intent": "sign in using delegated authorization", "expected_ids": ["eval-oauth-login"], "forbidden_ids": [], "lexical_expected_ids": [], "expected_action": "reuse", "expected_selected_id": "eval-oauth-login"},
+    {"id": "contract-oauth", "intent": "OAuth authentication", "contract": "authentication mode must be oauth", "expected_ids": ["eval-oauth-login"], "forbidden_ids": ["eval-password-login"], "lexical_expected_ids": ["eval-oauth-login"], "expected_action": "reuse", "expected_selected_id": "eval-oauth-login"},
+    {"id": "contract-encryption", "intent": "persist private records", "contract": "must use AES 256 encryption", "expected_ids": ["eval-aes-storage"], "forbidden_ids": ["eval-plaintext-storage"], "lexical_expected_ids": ["eval-aes-storage"], "expected_action": "reuse", "expected_selected_id": "eval-aes-storage"},
+    {"id": "contract-python", "intent": "compatible Python component", "contract": "requires Python >=3.12,<4", "expected_ids": ["eval-current-python"], "forbidden_ids": ["eval-legacy-python"], "lexical_expected_ids": ["eval-current-python"], "expected_action": "reuse", "expected_selected_id": "eval-current-python"},
+    {"id": "contract-jwt", "intent": "signed login credential", "contract": "JWT bearer", "expected_ids": ["eval-jwt-login"], "forbidden_ids": [], "lexical_expected_ids": ["eval-jwt-login"], "expected_action": "reuse", "expected_selected_id": "eval-jwt-login"},
+    {"id": "contract-adaptation", "intent": "persist private records", "contract": "must use AES 256 encryption; must rotate keys", "expected_ids": ["eval-aes-storage"], "forbidden_ids": ["eval-plaintext-storage"], "lexical_expected_ids": ["eval-aes-storage"], "expected_action": "adapt", "expected_selected_id": "eval-aes-storage"},
+    {"id": "filter-runtime", "intent": "OAuth login", "runtime": ["python"], "expected_ids": ["eval-oauth-login"], "forbidden_ids": ["eval-password-login"], "lexical_expected_ids": ["eval-oauth-login"], "expected_action": "reuse", "expected_selected_id": "eval-oauth-login"},
+    {"id": "filter-platform", "intent": "OAuth login", "platform": ["linux"], "expected_ids": ["eval-oauth-login"], "forbidden_ids": ["eval-password-login"], "lexical_expected_ids": ["eval-oauth-login"], "expected_action": "reuse", "expected_selected_id": "eval-oauth-login"},
+    {"id": "filter-license", "intent": "OAuth login", "license": ["Apache-2.0"], "expected_ids": ["eval-oauth-login"], "forbidden_ids": ["eval-password-login"], "lexical_expected_ids": ["eval-oauth-login"], "expected_action": "reuse", "expected_selected_id": "eval-oauth-login"},
+    {"id": "filter-stack", "intent": "OAuth login", "stack": ["fastapi"], "expected_ids": ["eval-oauth-login"], "forbidden_ids": ["eval-password-login"], "lexical_expected_ids": ["eval-oauth-login"], "expected_action": "reuse", "expected_selected_id": "eval-oauth-login"},
+    {"id": "filter-category", "intent": "OAuth login", "category_hint": ["Code and components"], "expected_ids": ["eval-oauth-login"], "forbidden_ids": ["eval-password-login"], "lexical_expected_ids": ["eval-oauth-login"], "expected_action": "reuse", "expected_selected_id": "eval-oauth-login"},
+    {"id": "relationship-proof", "intent": "OAuth login", "expected_ids": ["eval-oauth-login"], "forbidden_ids": [], "lexical_expected_ids": ["eval-oauth-login"], "expected_action": "reuse", "expected_selected_id": "eval-oauth-login", "relationship_seed_ids": ["eval-oauth-login"], "relationship_expected_ids": ["eval-jwt-login", "eval-current-python"], "relationship_forbidden_ids": ["eval-password-login", "eval-aes-storage"]}
+  ]
+}
