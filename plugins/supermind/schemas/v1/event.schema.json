@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Supermind Authority Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "device_id", "entity_type", "entity_id", "operation", "parent_event_ids", "occurred_at", "payload", "content_hash"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "event_id": {"$ref": "#/$defs/identifier"},
+    "device_id": {"$ref": "#/$defs/identifier"},
+    "entity_type": {"enum": ["capability", "evidence", "relationship", "demand", "reuse_outcome", "metadata", "audit"]},
+    "entity_id": {"$ref": "#/$defs/identifier"},
+    "operation": {"type": "string"},
+    "parent_event_ids": {"type": "array", "maxItems": 1024, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
+    "occurred_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$"},
+    "payload": {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue"}},
+    "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "jsonValue": {"anyOf": [{"type": "null"}, {"type": "boolean"}, {"type": "number"}, {"type": "string"}, {"type": "array", "items": {"$ref": "#/$defs/jsonValue"}}, {"type": "object", "additionalProperties": {"$ref": "#/$defs/jsonValue"}}]}
+  },
+  "allOf": [
+    {"if": {"properties": {"entity_type": {"const": "capability"}}}, "then": {"properties": {"operation": {"enum": ["registered", "updated", "tombstoned", "resolved"]}}}},
+    {"if": {"properties": {"entity_type": {"const": "evidence"}}}, "then": {"properties": {"operation": {"enum": ["observed", "updated", "tombstoned", "resolved"]}}}},
+    {"if": {"properties": {"entity_type": {"const": "relationship"}}}, "then": {"properties": {"operation": {"enum": ["declared", "updated", "tombstoned", "resolved"]}}}},
+    {"if": {"properties": {"entity_type": {"const": "demand"}}}, "then": {"properties": {"operation": {"enum": ["observed", "linked", "resolved", "tombstoned"]}}}},
+    {"if": {"properties": {"entity_type": {"const": "reuse_outcome"}}}, "then": {"properties": {"operation": {"enum": ["recorded", "tombstoned"]}}}},
+    {"if": {"properties": {"entity_type": {"const": "metadata"}}}, "then": {"properties": {"operation": {"enum": ["set", "tombstoned"]}}}},
+    {"if": {"properties": {"entity_type": {"const": "audit"}}}, "then": {"properties": {"operation": {"const": "observed"}}}}
+  ]
+}

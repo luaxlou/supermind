@@ -7,7 +7,7 @@ import math
 import re
 from collections import Counter
 from dataclasses import fields, replace
-from typing import TypeVar
+from typing import Any, TypeVar
 from urllib.parse import quote, unquote_plus
 
 import yaml
@@ -228,6 +228,51 @@ def _redact_assignment(match: re.Match[str]) -> str:
 def redact_uri(value: str) -> str:
     """Use the same policy for standalone references and URIs embedded in text."""
     return redact_text(value)
+
+
+def sanitize_json(value: object) -> Any:
+    """Return a JSON-only value with every text value crossing redaction.
+
+    Event payloads are untrusted structured input.  Keeping this conversion next
+    to the text redactor makes the privacy boundary explicit and reusable while
+    leaving event-shape limits to the authority event validator.
+    """
+    return _sanitize_json(value, active=set())
+
+
+def _sanitize_json(value: object, *, active: set[int]) -> Any:
+    if value is None or type(value) in {bool, int, float}:
+        return value
+    if type(value) is str:
+        return redact_text(value)
+    if isinstance(value, dict):
+        identity = id(value)
+        if identity in active:
+            raise ValueError("JSON payload cannot contain cycles")
+        active.add(identity)
+        try:
+            clean: dict[str, Any] = {}
+            for key, item in value.items():
+                if type(key) is not str:
+                    raise ValueError("JSON object keys must be strings")
+                clean[key] = (
+                    REDACTION
+                    if _SENSITIVE_KEY_PATTERN.fullmatch(key)
+                    else _sanitize_json(item, active=active)
+                )
+            return clean
+        finally:
+            active.remove(identity)
+    if isinstance(value, (list, tuple)):
+        identity = id(value)
+        if identity in active:
+            raise ValueError("JSON payload cannot contain cycles")
+        active.add(identity)
+        try:
+            return [_sanitize_json(item, active=active) for item in value]
+        finally:
+            active.remove(identity)
+    raise ValueError(f"unsupported JSON payload value: {type(value).__name__}")
 
 
 def _redact_uri_parts(value: str) -> str:

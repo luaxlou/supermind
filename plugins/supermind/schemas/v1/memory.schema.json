@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Supermind Memory Marker v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "event_schema_versions", "renderer_version", "repository_id", "default_branch"],
+  "properties": {
+    "format": {"const": 1},
+    "event_schema_versions": {"type": "array", "const": [1]},
+    "renderer_version": {"type": "string", "minLength": 1, "maxLength": 128},
+    "repository_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "default_branch": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^\\S+$"}
+  }
+}
