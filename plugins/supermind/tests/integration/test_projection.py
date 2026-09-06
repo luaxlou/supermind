@@ -233,7 +233,15 @@ def test_valid_replay_repairs_corrupt_local_demand_history(empty_repository, emb
     assert compare_projection(result, empty_repository).equivalent
     assert {event.id for event in empty_repository.list_requirement_events("demand-1")} == {"created", "linked"}
     root = empty_repository._database_path.parent
-    paths = MemoryPaths(root, root / "database", root / "runtime", root / "model-cache", root / "locks", root / "generations")
+    paths = MemoryPaths(
+        root=root,
+        config=root / "config.json",
+        checkout=root / "repository",
+        database=root / "derived" / "database",
+        model_cache=root / "model-cache",
+        locks=root / "locks",
+        generations=root / "derived" / "generations",
+    )
     health = HealthManager(paths, empty_repository, embeddings,
                            authority_mode="events-v1", expected_authority_digest=result.digest)
     assert health.ensure_healthy().healthy

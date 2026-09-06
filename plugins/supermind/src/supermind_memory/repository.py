@@ -1012,7 +1012,7 @@ class CapabilityRepository:
             or Path(generation).name != generation
         ):
             raise RuntimeError("active generation pointer is invalid")
-        generation_dir = self._generation_root / "generations" / generation
+        generation_dir = self._managed_generations_root() / generation
         _require_real_tree(generation_dir, self._generation_root)
         manifest = _read_json_no_follow(generation_dir / "manifest.json")
         if manifest.get("generation") != generation or not all(
@@ -1045,7 +1045,7 @@ class CapabilityRepository:
             reader = self._generation_readers.get(generation)
             if reader is None:
                 reader = CapabilityRepository.open(
-                    self._generation_root / "generations" / generation / "database",
+                    self._managed_generations_root() / generation / "database",
                     writer_lock_path=self._writer_lock_path,
                 )
                 self._generation_readers[generation] = reader
@@ -1071,14 +1071,17 @@ class CapabilityRepository:
         if not self._active_generation_required:
             return
         root = self._generation_root.absolute()
-        expected_database = root / "database"
+        uses_derived_layout = self._database_path == (root / "derived" / "database").resolve()
+        expected_database = root / "derived" / "database" if uses_derived_layout else root / "database"
+        runtime = root / "derived" / "runtime" if uses_derived_layout else root / "runtime"
+        generations = root / "derived" / "generations" if uses_derived_layout else root / "generations"
         for path in (
             root,
             expected_database,
-            root / "runtime",
+            runtime,
             root / "model-cache",
             root / "locks",
-            root / "generations",
+            generations,
             root / "active-generation.json",
         ):
             if path.is_symlink():
@@ -1087,6 +1090,12 @@ class CapabilityRepository:
             raise RuntimeError("managed repository database escapes the memory root")
         if expected_database.exists():
             _require_real_tree(expected_database, root)
+
+    def _managed_generations_root(self) -> Path:
+        root = self._generation_root
+        if self._database_path == (root / "derived" / "database").resolve():
+            return root / "derived" / "generations"
+        return root / "generations"
 
     def _structured_source_fingerprint(self) -> tuple[str, int]:
         rows = []
@@ -1787,7 +1796,10 @@ def _require_recovery_paths(database_path: Path, writer_lock_path: Path) -> None
     canonical_lock = writer_lock_path.resolve()
     owner = canonical_lock.parent.parent
     if canonical_lock != owner / "locks" / "writer.lock" or not (
-        canonical_database.parent == owner or canonical_database.is_relative_to(owner / "generations")
+        canonical_database.parent == owner
+        or canonical_database.is_relative_to(owner / "generations")
+        or canonical_database == owner / "derived" / "database"
+        or canonical_database.is_relative_to(owner / "derived" / "generations")
     ):
         raise RuntimeError("unsafe migration recovery lock ownership")
     if writer_lock_path.exists() and not writer_lock_path.is_file():

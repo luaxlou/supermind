@@ -84,19 +84,23 @@ def test_memory_paths_are_exact_owned_children_of_the_capability_memory_root(tmp
     root = (tmp_path / "codex-home").resolve()
     paths = MemoryPaths.from_codex_home(root)
 
-    assert paths.root == root / "supermind" / "capability-memory"
+    assert paths.root == root / "supermind" / "memory"
     assert {
+        "config": paths.config,
+        "checkout": paths.checkout,
         "database": paths.database,
         "runtime": paths.runtime,
         "model_cache": paths.model_cache,
         "locks": paths.locks,
         "generations": paths.generations,
     } == {
-        "database": paths.root / "database",
-        "runtime": paths.root / "runtime",
+        "config": paths.root / "config.json",
+        "checkout": paths.root / "repository",
+        "database": paths.root / "derived" / "database",
+        "runtime": paths.root / "derived" / "runtime",
         "model_cache": paths.root / "model-cache",
         "locks": paths.root / "locks",
-        "generations": paths.root / "generations",
+        "generations": paths.root / "derived" / "generations",
     }
 
 
@@ -120,7 +124,7 @@ def test_domain_dataclasses_are_frozen_and_keep_their_declared_fields():
         EvaluationResult: ("capability", "expected_net_value", "accepted", "reasons"),
         ReuseResult: ("capability_id", "project", "succeeded", "integration_effort", "benefit", "failure_reason"),
         ReuseDecision: ("requirement", "search_result", "action", "selected_capability_id", "rationale"),
-        MemoryPaths: ("root", "database", "runtime", "model_cache", "locks", "generations"),
+        MemoryPaths: ("root", "config", "checkout", "database", "model_cache", "locks", "generations"),
     }
 
     assert {

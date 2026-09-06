@@ -553,11 +553,11 @@ class HealthManager:
         try:
             root = self.paths.root.absolute()
             expected = {
-                "database": root / "database",
-                "runtime": root / "runtime",
+                "database": root / "derived" / "database",
+                "runtime": root / "derived" / "runtime",
                 "model_cache": root / "model-cache",
                 "locks": root / "locks",
-                "generations": root / "generations",
+                "generations": root / "derived" / "generations",
             }
             _reject_symlink(root)
             if root.resolve() != root:
