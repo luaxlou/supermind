@@ -345,7 +345,7 @@ def _parser() -> _ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     initialize = commands.add_parser("init")
-    initialize.add_argument("--project-root", required=True)
+    initialize.add_argument("--project-root")
     repository = initialize.add_mutually_exclusive_group()
     repository.add_argument("--repo")
     repository.add_argument("--create-private", action="store_true")
@@ -423,7 +423,8 @@ def _dispatch(
 ) -> tuple[object, str | None]:
     command = arguments.command
     if command == "init":
-        health = memory.initialize(Path(arguments.project_root))
+        health = (memory.initialize(Path(arguments.project_root))
+                  if arguments.project_root else memory.health_check())
         coordinator = getattr(memory, "sync_coordinator", None)
         if coordinator is None:
             return health, None

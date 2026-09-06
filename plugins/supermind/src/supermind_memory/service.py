@@ -836,14 +836,18 @@ class CapabilityMemory:
         )
 
     def _discover_and_persist(self, context: DiscoveryContext) -> DiscoveryResult:
-        discovered = self.discovery_engine.discover(context)
+        metadata = None
+        if isinstance(self.discovery_engine, CapabilityDiscovery):
+            discovered, metadata = self.discovery_engine.discover_staged(context)
+        else:
+            discovered = self.discovery_engine.discover(context)
         discovered = replace(
             discovered,
             capabilities=tuple(redact_capability(item) for item in discovered.capabilities),
             sources_scanned=tuple(redact_uri(source) for source in discovered.sources_scanned),
         )
         if self.sync_coordinator is not None:
-            return self._persist_discovery_events(discovered, context)
+            return self._persist_discovery_events(discovered, context, metadata)
         documents = tuple(
             str(
                 self.repository._capability_row(
@@ -922,9 +926,14 @@ class CapabilityMemory:
 
     def _persist_discovery_events(
         self, discovered: DiscoveryResult, context: DiscoveryContext,
+        metadata: tuple[str, object] | None = None,
     ) -> DiscoveryResult:
         stored: list[Capability] = []
         specifications = []
+        if metadata is not None:
+            key, value = metadata
+            if self.repository.get_metadata(key) != value:
+                specifications.append(("metadata", key, "set", {"value": value}))
         discovered_ids = {item.id for item in discovered.capabilities}
         refresh_roots = _refresh_roots(context, discovered.sources_scanned)
         for capability in discovered.capabilities:

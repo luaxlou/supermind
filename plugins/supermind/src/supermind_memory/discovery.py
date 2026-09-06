@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 import json
 import os
@@ -77,6 +78,15 @@ class SourceRegistry:
             if item["path"] == candidate:
                 return item["id"]
         return _local_source_identity(candidate)
+
+    def detached(self) -> SourceRegistry:
+        """Stage registrations without modifying authoritative repository metadata."""
+        registry = SourceRegistry()
+        registry._sources = copy.deepcopy(self._load() if self._repository is not None else self._sources)
+        return registry
+
+    def metadata(self) -> tuple[str, object]:
+        return _REGISTRY_KEY, {"sources": copy.deepcopy(self._sources)}
 
     def _register(self, kind: str, path: Path) -> None:
         root = _SafeRoot.open(path)
@@ -301,6 +311,16 @@ class _SafeRoot:
 class CapabilityDiscovery:
     def __init__(self, source_registry: SourceRegistry | None = None) -> None:
         self._source_registry = source_registry or SourceRegistry()
+
+    def discover_staged(self, context: DiscoveryContext) -> tuple[DiscoveryResult, tuple[str, object]]:
+        original = self._source_registry
+        staged = original.detached()
+        self._source_registry = staged
+        try:
+            result = self.discover(context)
+            return result, staged.metadata()
+        finally:
+            self._source_registry = original
 
     def scan_active_project(self, path: Path) -> tuple[Capability, ...]:
         root = _SafeRoot.open(path)

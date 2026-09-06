@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from supermind_memory.event_store import EventStore
+from supermind_memory.discovery import CapabilityDiscovery, SourceRegistry
 from supermind_memory.config import MemoryPaths
 from supermind_memory.projection import project_authority
 from supermind_memory.replay import replay
@@ -138,6 +139,21 @@ def test_discovery_commits_all_capabilities_in_one_transaction(event_memory, tmp
     assert {item.id for item in result.capabilities} == {first.id, second.id}
     assert transactions.transaction_count == 1
     assert len(transactions.store.load_all()) == 2
+
+
+def test_init_commits_source_registry_metadata_and_replays_without_direct_write(event_memory, tmp_path, monkeypatch):
+    memory, transactions = event_memory
+    memory.discovery_engine = CapabilityDiscovery(SourceRegistry(memory.repository))
+    memory.bootstrap = SimpleNamespace(initialize=lambda _: None)
+    monkeypatch.setattr(memory.repository, "update_metadata", lambda *args: pytest.fail("direct registry write"))
+    assert memory.initialize(tmp_path).healthy
+    memory._assert_event_projection()
+    assert transactions.transaction_count == 1
+    metadata_events = [event for event in transactions.store.load_all() if event.entity_type == "metadata"]
+    assert len(metadata_events) == 1
+    source_registry = SourceRegistry(memory.repository)
+    assert tmp_path in source_registry.active_projects
+    assert source_registry.identity(tmp_path)
 
 
 def test_service_rejects_missing_event_coordinator(tmp_path):

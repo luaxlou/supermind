@@ -1610,6 +1610,14 @@ def test_plain_init_reports_missing_repository_configuration(tmp_path, capsys):
     assert json.loads(capsys.readouterr().err)["code"] == "memory_repository_unconfigured"
 
 
+def test_init_without_project_root_checks_health_without_discovery():
+    memory = FakeMemory()
+    code, stdout, stderr = run_cli(["init", "--repo", "owner/memory", "--format", "json"], memory)
+    assert code == 0, stderr
+    assert json.loads(stdout)["result"]["healthy"] is True
+    assert memory.calls == [("health", None)]
+
+
 def test_plain_init_reuses_existing_repository_configuration(tmp_path, monkeypatch):
     from argparse import Namespace
     from supermind_memory.cli import _initialize_repository_command
