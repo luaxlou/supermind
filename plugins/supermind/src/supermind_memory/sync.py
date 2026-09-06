@@ -461,16 +461,18 @@ class SyncCoordinator:
             target = self.paths.checkout / relative
             if target.is_symlink():
                 raise SyncBlocked("repository_symlink_unsafe", (relative,))
-            images[relative] = _read_image(target) if target.exists() else None
+            images[relative] = (
+                _read_image(target)
+                if target.exists() and not target.is_dir()
+                else None
+            )
         return images
 
     def _apply_images(self, images: dict[str, _FileImage | None]) -> None:
-        for relative, image in images.items():
-            _apply_image(self.paths.checkout, relative, image)
+        _replace_images(self.paths.checkout, images)
 
     def _restore_images(self, images: dict[str, _FileImage | None]) -> None:
-        for relative, image in images.items():
-            _apply_image(self.paths.checkout, relative, image)
+        _replace_images(self.paths.checkout, images)
 
     def _restore_projection(self, previous: ReplayResult, original: Exception) -> None:
         try:
@@ -578,3 +580,21 @@ def _apply_image(root: Path, relative: str, image: _FileImage | None) -> None:
         if descriptor >= 0:
             os.close(descriptor)
         temporary.unlink(missing_ok=True)
+
+
+def _replace_images(root: Path, images: dict[str, _FileImage | None]) -> None:
+    ordered = sorted(images, key=lambda item: (len(Path(item).parts), item), reverse=True)
+    for relative in ordered:
+        target = root / relative
+        if target.is_symlink():
+            raise SyncBlocked("repository_symlink_unsafe", (relative,))
+        if target.is_file():
+            target.unlink()
+        elif target.is_dir():
+            # Only an empty transaction-owned topology node may be removed. A
+            # concurrent untracked file makes recovery fail closed and is kept.
+            target.rmdir()
+    for relative in reversed(ordered):
+        image = images[relative]
+        if image is not None:
+            _apply_image(root, relative, image)

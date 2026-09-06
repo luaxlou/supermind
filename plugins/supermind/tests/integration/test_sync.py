@@ -545,6 +545,42 @@ def test_git_commit_failure_restores_index_authority_projection_and_next_mutatio
     assert device_a.mutate(event).sync_state is SyncState.SYNCED
 
 
+def test_commit_failure_restores_a_rendered_file_replaced_by_a_directory(devices):
+    _, source, device_a, _ = devices
+
+    class TopologyRenderer:
+        nested = False
+
+        def render(self, result, checkout):
+            catalog = checkout / "catalog"
+            if self.nested:
+                catalog.unlink()
+                catalog.mkdir()
+                (catalog / "item.md").write_text("nested\n")
+            else:
+                catalog.write_text("original\n")
+
+    renderer = TopologyRenderer()
+    device_a.coordinator.renderer = renderer
+    device_a.mutate(_capability_event("login", device="a", source=source))
+    pending_event = _capability_event("upload", device="a", source=source)
+    renderer.nested = True
+    device_a.runner.fail_commit_tree = True
+
+    with pytest.raises(SyncBlocked, match="materialization_failed"):
+        device_a.mutate(pending_event)
+
+    catalog = device_a.paths.checkout / "catalog"
+    assert catalog.is_file()
+    assert catalog.read_text() == "original\n"
+    assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+    assert tuple(event.entity_id for event in device_a.store.load_all()) == ("login",)
+
+    device_a.runner.fail_commit_tree = False
+    assert device_a.mutate(pending_event).sync_state is SyncState.SYNCED
+    assert (catalog / "item.md").read_text() == "nested\n"
+
+
 def _commit_remote_event(bare: Path, worktree: Path, event: AuthorityEvent) -> None:
     _run_git("clone", str(bare), str(worktree))
     EventStore(worktree).append(event)
