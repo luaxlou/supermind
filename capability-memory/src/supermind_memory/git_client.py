@@ -402,7 +402,7 @@ class GitHubClient:
             raise RepositoryInitBlocked("repository_not_writable")
         branch_ref = metadata.get("defaultBranchRef")
         branch = branch_ref.get("name") if isinstance(branch_ref, dict) else None
-        if branch is None:
+        if branch is None or branch == "":
             branch_result = _require_success(
                 self._runner.run((
                     "gh", "api", f"repos/{repository}", "--jq", ".default_branch",

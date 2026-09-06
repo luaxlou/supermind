@@ -1,13 +1,14 @@
 # Distributed Capability Memory design
 
-Status: Approved
+Status: Approved and implemented
 
-Implementation status: Local implementation and automated acceptance verified on 2026-09-07.
+Implementation status: Implementation and real private-repository cutover verified on 2026-09-07.
 The independent 0.2.0 CLI, pinned plugin bootstrap, distributed event synchronization, and
 categorized collapsible README are implemented. A copy of the real embedded library exported
-equivalently with 250 capabilities; the original store was retained. Real private GitHub cutover
-remains pending the user's repository selection. This design is not marked fully implemented
-until that external cutover is verified.
+equivalently with 250 capabilities; the original store was retained. The user-authorized private
+GitHub repository now contains the synchronized events and collapsible README. A fresh checkout
+passed health, reproduced the event digest and README, and returned identical login search matches.
+The locally installed 0.2.0 plugin routes through the pinned standalone CLI.
 Date: 2026-09-06
 Builds on: `docs/product/2026-09-04-capability-memory-design.md`
 

@@ -175,9 +175,10 @@ def test_connect_initializes_a_genuinely_empty_remote_and_writes_private_config(
     assert paths.checkout.is_dir()
 
 
-def test_connect_empty_uses_rest_default_branch_when_no_ref_exists(tmp_path):
+@pytest.mark.parametrize("branch", [None, ""])
+def test_connect_empty_uses_rest_default_branch_when_no_ref_exists(tmp_path, branch):
     bare = _bare_repository(tmp_path)
-    runner = LocalGitHubRunner(bare, branch=None, rest_branch="main")
+    runner = LocalGitHubRunner(bare, branch=branch, rest_branch="main")
     paths = MemoryPaths.from_codex_home(tmp_path / "data-home")
 
     config = initialize_repository(_request(runner), paths)
