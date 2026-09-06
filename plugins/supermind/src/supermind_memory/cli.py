@@ -17,14 +17,22 @@ from pathlib import Path
 from typing import Any, Iterator, NoReturn
 
 from supermind_memory.bootstrap import Bootstrap
-from supermind_memory.config import MemoryPaths, resolve_codex_home
+from supermind_memory.config import MemoryPaths, RepositoryConfig, resolve_codex_home
 from supermind_memory.discovery import CapabilityDiscovery, SourceRegistry
 from supermind_memory.embeddings import FastEmbedProvider, _load_model_lock
 from supermind_memory.explorer import CapabilityExplorer
 from supermind_memory.health import HealthManager
+from supermind_memory.event_store import EventStore
+from supermind_memory.git_client import (
+    GitClient, GitHubClient, InitRequest, SubprocessCommandRunner, initialize_repository,
+)
+from supermind_memory.projection import project_authority
+from supermind_memory.protocol import ProtocolEnvelope, operation_id
+from supermind_memory.replay import replay
 from supermind_memory.repository import CapabilityRepository
 from supermind_memory.search import CapabilitySearch
 from supermind_memory.service import CapabilityMemory
+from supermind_memory.sync import SyncCoordinator
 from supermind_memory.types import (
     ArtifactType,
     Capability,
@@ -83,7 +91,27 @@ def build_service(data_home: Path | None = None) -> CapabilityMemory:
             paths.database,
             writer_lock_path=paths.locks / "writer.lock",
         )
-        health = HealthManager(paths, repository, embeddings)
+        config = RepositoryConfig.read(paths.config) if paths.config.is_file() else None
+        coordinator = None
+        authority_digest = None
+        runner = SubprocessCommandRunner()
+        if config is not None:
+            replayed = replay(EventStore(paths.checkout).load_all())
+            project_authority(replayed, repository, embeddings)
+            authority_digest = replayed.digest
+            coordinator = SyncCoordinator(
+                paths=paths, config=config, git=GitClient(runner), github=GitHubClient(runner),
+                repository=repository, embeddings=embeddings,
+            )
+        else:
+            raise CapabilityMemoryBlocked(
+                "repository_not_initialized", "events-v1 repository is not initialized", ()
+            )
+        health = HealthManager(
+            paths, repository, embeddings,
+            authority_mode="events-v1" if config is not None else None,
+            expected_authority_digest=authority_digest,
+        )
         health.ensure_healthy()
         return CapabilityMemory(
             bootstrap=Bootstrap(
@@ -98,6 +126,9 @@ def build_service(data_home: Path | None = None) -> CapabilityMemory:
             embedding_provider=embeddings,
             health_manager=health,
             codex_home=codex_home,
+            sync_coordinator=coordinator,
+            authority_mode="events-v1",
+            command_runner=runner,
         )
     except BaseException:
         if repository is not None:
@@ -122,7 +153,7 @@ def _prepare_safe_paths(paths: MemoryPaths) -> None:
         ):
             if path.is_symlink():
                 raise OSError(f"capability-memory path must not be a symlink: {path}")
-            path.mkdir(exist_ok=True)
+            path.mkdir(parents=True, exist_ok=True)
             if path.is_symlink() or not path.is_dir():
                 raise OSError(f"unsafe capability-memory directory: {path}")
     except OSError as error:
@@ -141,15 +172,21 @@ def main(
     service_factory: Callable[[], CapabilityMemory] = build_service,
 ) -> int:
     """Run one CLI operation and return its stable process exit code."""
+    invocation = tuple(sys.argv[1:] if argv is None else argv)
+    request_id = operation_id()
+    protocol_json = "--format" in invocation and "json" in invocation
     try:
-        arguments = _parser().parse_args(argv)
+        arguments = _parser().parse_args(invocation)
         data_home = (
             Path(arguments.data_home).expanduser().resolve()
             if arguments.data_home is not None
             else None
         )
     except (InvalidInput, OSError, RuntimeError, ValueError) as error:
-        return _emit_failure(2, _invalid_payload(error))
+        payload = _invalid_payload(error)
+        if protocol_json:
+            payload = _protocol_failure(request_id, payload)
+        return _emit_failure(2, payload)
 
     memory: CapabilityMemory | None = None
     result: object | None = None
@@ -162,6 +199,8 @@ def main(
                 try:
                     if service_factory is _DEFAULT_SERVICE_FACTORY:
                         # Resolve the global name so tests and embedders can replace the factory.
+                        if arguments.command == "init":
+                            _initialize_repository_command(arguments, data_home)
                         memory = build_service(data_home=data_home)
                     else:
                         memory = service_factory()
@@ -175,7 +214,10 @@ def main(
                         "" if not markdown or markdown.endswith("\n") else "\n"
                     )
                 else:
-                    rendered_output = _json_text(result)
+                    rendered_output = _json_text(
+                        _protocol_success(request_id, memory, result)
+                        if protocol_json else result
+                    )
             except CapabilityMemoryBlocked as error:
                 failure = (3, _blocked_payload(error.code, error.message, error.attempts))
             except (InvalidInput, json.JSONDecodeError, KeyError, ValueError) as error:
@@ -213,6 +255,8 @@ def main(
         )
 
     if failure is not None:
+        if protocol_json:
+            failure = (failure[0], _protocol_failure(request_id, failure[1], memory))
         return _emit_failure(*failure)
     try:
         sys.stdout.write(rendered_output or "")
@@ -301,6 +345,10 @@ def _parser() -> _ArgumentParser:
 
     initialize = commands.add_parser("init")
     initialize.add_argument("--project-root", required=True)
+    repository = initialize.add_mutually_exclusive_group(required=True)
+    repository.add_argument("--repo")
+    repository.add_argument("--create-private", action="store_true")
+    initialize.add_argument("--name", default="supermind-memory")
     _add_format(initialize)
 
     discover = commands.add_parser("discover")
@@ -310,7 +358,7 @@ def _parser() -> _ArgumentParser:
     discover.add_argument("--codex-home")
     _add_format(discover)
 
-    for command in ("search", "evaluate", "register", "record-use"):
+    for command in ("search", "evaluate", "register", "record-use", "record-outcome"):
         operation = commands.add_parser(command)
         operation.add_argument("--input", required=True)
         _add_format(operation, markdown=command == "search")
@@ -349,6 +397,16 @@ def _parser() -> _ArgumentParser:
     _add_format(rebuild)
     health = commands.add_parser("health")
     _add_format(health)
+    for command in ("status", "sync", "render", "open"):
+        operation = commands.add_parser(command)
+        _add_format(operation)
+    migrate = commands.add_parser("migrate")
+    migrate.add_argument("--repo", required=True)
+    migrate.add_argument("--legacy-data-home", required=True)
+    _add_format(migrate)
+    resolve = commands.add_parser("resolve-conflict")
+    resolve.add_argument("--input", required=True)
+    _add_format(resolve)
     return parser
 
 
@@ -364,7 +422,14 @@ def _dispatch(
 ) -> tuple[object, str | None]:
     command = arguments.command
     if command == "init":
-        return memory.initialize(Path(arguments.project_root)), None
+        health = memory.initialize(Path(arguments.project_root))
+        coordinator = getattr(memory, "sync_coordinator", None)
+        if coordinator is None:
+            return health, None
+        return {
+            "health": health,
+            "repository": coordinator.config,
+        }, None
     if command == "discover":
         if arguments.input:
             context = _discovery_context(_read_object(arguments.input))
@@ -402,7 +467,7 @@ def _dispatch(
             _capability(_object_field(payload, "capability")),
             tuple(_evidence(item) for item in evidence),
         ), None
-    if command == "record-use":
+    if command in {"record-use", "record-outcome"}:
         return memory.record_use(_reuse_result(_read_object(arguments.input))), None
     if command == "begin-design":
         return SupermindWorkflow(memory).begin_design(
@@ -444,6 +509,18 @@ def _dispatch(
                 report.failures,
             )
         return report, None
+    if command == "status":
+        return memory.status(), None
+    if command == "sync":
+        return memory.sync(), None
+    if command == "render":
+        return memory.render(), None
+    if command == "open":
+        return memory.open_browser(), None
+    if command == "migrate":
+        return memory.migrate(Path(arguments.legacy_data_home), arguments.repo), None
+    if command == "resolve-conflict":
+        return memory.resolve_conflict(_read_object(arguments.input)), None
     if command == "inspect":
         return _inspect(arguments, memory)
     raise InvalidInput(f"unknown command: {command}")
@@ -501,6 +578,33 @@ def _read_object(source: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise InvalidInput("input document must be a JSON object")
     return value
+
+
+def _initialize_repository_command(arguments: argparse.Namespace, data_home: Path | None) -> RepositoryConfig:
+    codex_home = data_home or resolve_codex_home()
+    paths = MemoryPaths.from_codex_home(codex_home)
+    runner = SubprocessCommandRunner()
+    repository = arguments.repo
+    if arguments.create_private:
+        owner_result = runner.run(("gh", "api", "user", "--jq", ".login"))
+        if owner_result.returncode != 0:
+            raise CapabilityMemoryBlocked("github_identity_unavailable", "cannot resolve GitHub owner", ())
+        try:
+            owner = owner_result.stdout.decode("utf-8", errors="strict").strip()
+        except UnicodeDecodeError as error:
+            raise InvalidInput("GitHub owner is not valid UTF-8") from error
+        repository = f"{owner}/{arguments.name}"
+    if not repository:
+        raise InvalidInput("init requires --repo or --create-private")
+    device_seed = hashlib.sha256(str(paths.root).encode()).hexdigest()[:24]
+    try:
+        return initialize_repository(
+            InitRequest(repository, f"device-{device_seed}", arguments.create_private, runner), paths,
+        )
+    except Exception as error:
+        if isinstance(error, CapabilityMemoryBlocked):
+            raise
+        raise CapabilityMemoryBlocked("repository_initialization_failed", str(error), (str(error),)) from error
 
 
 def _requirement(payload: Mapping[str, Any]) -> RequirementProfile:
@@ -738,6 +842,40 @@ def _blocked_payload(
         "message": redact_text(message),
         "attempts": tuple(redact_text(attempt) for attempt in attempts),
     }
+
+
+def _protocol_metadata(memory: CapabilityMemory | None, result: object | None = None) -> tuple[str, str | None, str | None]:
+    sync_state = getattr(result, "sync_state", None)
+    digest = getattr(result, "event_set_digest", None)
+    generation = getattr(result, "generation", None)
+    if memory is not None:
+        state = getattr(memory, "protocol_state", None)
+        if callable(state):
+            try:
+                metadata = state()
+            except Exception:
+                metadata = {}
+            sync_state = sync_state or metadata.get("sync_state")
+            digest = digest or metadata.get("event_set_digest")
+            generation = generation or metadata.get("generation")
+    return (getattr(sync_state, "value", sync_state) or "unchanged", digest, generation)
+
+
+def _protocol_success(request_id: str, memory: CapabilityMemory, result: object) -> ProtocolEnvelope:
+    sync_state, digest, generation = _protocol_metadata(memory, result)
+    return ProtocolEnvelope.complete(request_id, result, sync_state=sync_state,
+                                     event_set_digest=digest, generation=generation)
+
+
+def _protocol_failure(
+    request_id: str, payload: Mapping[str, object], memory: CapabilityMemory | None = None,
+) -> ProtocolEnvelope:
+    sync_state, digest, generation = _protocol_metadata(memory)
+    return ProtocolEnvelope.failure(
+        request_id, str(payload["status"]), str(payload["code"]), str(payload["message"]),
+        tuple(str(item) for item in payload.get("attempts", ())), sync_state=sync_state,
+        event_set_digest=digest, generation=generation,
+    )
 
 
 def _write_json(stream: Any, value: object) -> None:

@@ -711,7 +711,6 @@ class CapabilityRepository:
             )
 
     def _check_authority_binding(self, manifest: Mapping[str, object] | None = None) -> None:
-        # TEMPORARY Task 3 staging guard. Task 8 wires config and removes legacy authority.
         if self._authority_mode != "events-v1":
             return
         from supermind_memory.projection import AUTHORITY_DIGEST_KEY, MATERIALIZED_DIGEST_KEY, materialized_digest

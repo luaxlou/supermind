@@ -56,6 +56,14 @@ class HealthManager:
             expected_authority_digest=expected_authority_digest,
         )
 
+    def bind_authority_digest(self, digest: str) -> None:
+        """Advance the required replay digest after an event transaction projects it."""
+        self.repository.configure_generation_reads(
+            self.paths.root, required=True, authority_mode="events-v1",
+            expected_authority_digest=digest,
+        )
+        self.authority_mode = "events-v1"
+
     def check(self) -> HealthReport:
         lock_path_failure = self._writer_lock_safety_failure()
         if lock_path_failure is not None:
@@ -177,7 +185,6 @@ class HealthManager:
                 "evaluation": evaluation,
                 "evaluation_dataset_digest": evaluation["digest"],
             }
-            # TEMPORARY Task 3 staging guard; Task 8 requires event authority.
             if self.authority_mode == "events-v1":
                 self.repository._check_authority_binding()
                 manifest["authority_event_set_digest"] = self.repository.get_metadata("authority_event_set_digest")

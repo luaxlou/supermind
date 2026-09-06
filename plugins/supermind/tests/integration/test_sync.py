@@ -257,6 +257,11 @@ def test_sync_transaction_uses_and_validates_production_repository_renderer(devi
     assert "Login" in (device_a.paths.checkout / "README.md").read_text()
     assert validate_render(device_a.paths.checkout, report.event_set_digest).event_set_digest == report.event_set_digest
 
+    rendered = device_a.coordinator.render_repository()
+
+    assert rendered.sync_state is SyncState.SYNCED
+    assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
+
 
 def test_two_devices_expose_sibling_updates_as_a_search_safe_conflict(devices, embeddings):
     _, source, device_a, device_b = devices
@@ -298,6 +303,48 @@ def test_two_devices_expose_sibling_updates_as_a_search_safe_conflict(devices, e
     assert conflicted.status is SearchStatus.COMPLETE
     assert conflicted.matches == ()
     assert unrelated_result.status is SearchStatus.COMPLETE
+
+
+def test_conflict_resolution_requires_exact_current_heads_and_restores_entity(devices):
+    _, source, device_a, device_b = devices
+    base = _capability_event("login", device="seed", source=source)
+    device_a.mutate(base)
+    device_b.sync()
+    device_b.runner.online = False
+    device_b.mutate(_capability_event(
+        "login", device="b", source=source, event_id="b-login-update",
+        parent=base.event_id, summary="Device B",
+    ))
+    device_b.runner.online = True
+    device_a.mutate(_capability_event(
+        "login", device="a", source=source, event_id="a-login-update",
+        parent=base.event_id, summary="Device A",
+    ))
+    with pytest.raises(SyncBlocked, match="authority_conflict"):
+        device_b.sync()
+    conflicted = device_b.replay()
+    heads = conflicted.heads[("capability", "login")]
+    before = len(device_b.store.load_all())
+    chosen = _capability("login", source, "Resolved implementation")
+    payload = asdict(chosen)
+    payload["artifact_type"] = chosen.artifact_type.value
+    payload["lifecycle"] = chosen.lifecycle.value
+
+    with pytest.raises(SyncBlocked, match="conflict_heads_stale"):
+        device_b.coordinator.resolve_conflict(
+            entity_type="capability", entity_id="login", expected_head_ids=heads[:1],
+            payload=payload, event_id="resolution-stale", occurred_at="2026-09-06T13:00:00Z",
+        )
+    assert len(device_b.store.load_all()) == before
+
+    report = device_b.coordinator.resolve_conflict(
+        entity_type="capability", entity_id="login", expected_head_ids=heads,
+        payload=payload, event_id="resolution-exact", occurred_at="2026-09-06T13:00:00Z",
+    )
+
+    assert report.sync_state is SyncState.SYNCED
+    assert device_b.replay().conflicts == ()
+    assert device_b.repository.get_capability("login").summary == "Resolved implementation"
 
 
 def test_offline_mutation_is_searchable_then_reaches_another_checkout(devices, embeddings):
@@ -488,7 +535,7 @@ def test_invalid_typed_payload_fails_before_append_and_next_mutation_recovers(de
     assert device_a.mutate(valid).sync_state is SyncState.SYNCED
 
 
-def test_local_projector_failure_restores_projection_and_next_mutation_recovers(devices):
+def test_local_projector_failure_commits_event_before_projection_and_next_sync_recovers(devices):
     _, source, device_a, _ = devices
     event = _capability_event("login", device="a", source=source)
 
@@ -497,17 +544,19 @@ def test_local_projector_failure_restores_projection_and_next_mutation_recovers(
         raise RuntimeError("projector failed")
 
     device_a.coordinator.projector = failing_projector
-    with pytest.raises(SyncBlocked, match="projection_failed"):
+    with pytest.raises(SyncBlocked, match="projection_failed") as failure:
         device_a.mutate(event)
 
     assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
-    assert device_a.store.load_all() == ()
+    assert device_a.store.load_all() == (event,)
+    assert failure.value.sync_state is SyncState.COMMITTED
+    assert failure.value.event_set_digest == replay((event,)).digest
     assert device_a.repository.get_metadata("partial-projector-write") is None
     device_a.coordinator.projector = project_authority
-    assert device_a.mutate(event).sync_state is SyncState.SYNCED
+    assert device_a.sync().sync_state is SyncState.SYNCED
 
 
-def test_embedding_failure_leaves_authority_and_projection_unchanged_then_recovers(devices):
+def test_embedding_failure_commits_authority_then_projection_recovers_on_sync(devices):
     _, source, device_a, _ = devices
     event = _capability_event("login", device="a", source=source)
     healthy_embeddings = device_a.coordinator.embeddings
@@ -524,10 +573,10 @@ def test_embedding_failure_leaves_authority_and_projection_unchanged_then_recove
         device_a.mutate(event)
 
     assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
-    assert device_a.store.load_all() == ()
+    assert device_a.store.load_all() == (event,)
     assert device_a.repository.list_capabilities() == ()
     device_a.coordinator.embeddings = healthy_embeddings
-    assert device_a.mutate(event).sync_state is SyncState.SYNCED
+    assert device_a.sync().sync_state is SyncState.SYNCED
 
 
 def test_local_renderer_partial_failure_never_touches_live_checkout_and_recovers(devices):
@@ -753,7 +802,7 @@ def test_missing_parent_in_remote_union_blocks_without_dirtying_checkout(devices
     assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
 
 
-def test_remote_projector_failure_restores_checkout_projection_and_next_sync_recovers(
+def test_remote_projector_failure_commits_incoming_authority_and_next_sync_recovers(
     devices, tmp_path,
 ):
     bare, source, device_a, _ = devices
@@ -769,7 +818,7 @@ def test_remote_projector_failure_restores_checkout_projection_and_next_sync_rec
         device_a.sync()
 
     assert device_a.coordinator.git.status(device_a.paths.checkout) == ()
-    assert device_a.store.load_all() == ()
+    assert device_a.store.load_all() == (event,)
     assert device_a.repository.get_metadata("partial-projector-write") is None
     device_a.coordinator.projector = project_authority
     assert device_a.sync().sync_state is SyncState.SYNCED

@@ -14,6 +14,7 @@ import pytest
 from conftest import KeywordEmbeddingProvider
 
 from supermind_memory.cli import build_service, main
+from supermind_memory.sync import SyncBlocked, SyncState
 from supermind_memory.types import (
     ArtifactType,
     Capability,
@@ -142,6 +143,30 @@ class FakeMemory:
         self.calls.append(("health", None))
         return HealthReport(True, "generation-1", (), NOW)
 
+    def status(self):
+        self.calls.append(("status", None))
+        return {"healthy": True}
+
+    def sync(self):
+        self.calls.append(("sync", None))
+        return {"sync_state": "synced"}
+
+    def render(self):
+        self.calls.append(("render", None))
+        return {"rendered": True}
+
+    def open_browser(self):
+        self.calls.append(("open", None))
+        return {"url": "https://github.com/owner/memory"}
+
+    def migrate(self, legacy_data_home, repository):
+        self.calls.append(("migrate", (legacy_data_home, repository)))
+        return {"equivalent": True}
+
+    def resolve_conflict(self, payload):
+        self.calls.append(("resolve-conflict", payload))
+        return {"sync_state": "synced"}
+
 
 def run_cli(arguments, memory):
     stdout = io.StringIO()
@@ -155,6 +180,78 @@ def write_json(tmp_path: Path, name: str, payload: object) -> str:
     path = tmp_path / name
     path.write_text(json.dumps(payload), encoding="utf-8")
     return str(path)
+
+
+def test_status_uses_versioned_protocol():
+    memory = FakeMemory()
+
+    exit_code, stdout, stderr = run_cli(["status", "--format", "json"], memory)
+
+    response = json.loads(stdout)
+    assert exit_code == 0
+    assert stderr == ""
+    assert response.keys() >= {
+        "protocol_version", "operation_id", "status", "sync_state",
+        "event_set_digest", "generation", "result",
+    }
+    assert response["protocol_version"] == 1
+
+
+def test_projection_failure_reports_committed_event_state_in_protocol(tmp_path):
+    class ProjectionFailureMemory(FakeMemory):
+        def register(self, item, evidence):
+            raise SyncBlocked(
+                "projection_failed", ("projector unavailable",),
+                sync_state=SyncState.COMMITTED, event_set_digest="a" * 64,
+                commit_id="b" * 40,
+            )
+
+        def protocol_state(self):
+            return {
+                "sync_state": "committed", "event_set_digest": "a" * 64,
+                "generation": "generation-1",
+            }
+
+    input_path = write_json(
+        tmp_path, "registration-projection-failure.json",
+        {"capability": capability_json(), "evidence": []},
+    )
+
+    exit_code, stdout, stderr = run_cli(
+        ["register", "--input", input_path, "--format", "json"],
+        ProjectionFailureMemory(),
+    )
+
+    response = json.loads(stderr)
+    assert exit_code == 3
+    assert stdout == ""
+    assert response["code"] == "projection_failed"
+    assert response["sync_state"] == "committed"
+    assert response["event_set_digest"] == "a" * 64
+
+
+def test_repository_commands_use_versioned_json_dispatch(tmp_path):
+    memory = FakeMemory()
+    resolution = write_json(tmp_path, "resolution.json", {
+        "entity_type": "capability", "entity_id": "auth.login",
+        "head_event_ids": ["head-a", "head-b"], "payload": capability_json(),
+    })
+    commands = (
+        ["status", "--format", "json"], ["sync", "--format", "json"],
+        ["render", "--format", "json"], ["open", "--format", "json"],
+        ["migrate", "--repo", "owner/memory", "--legacy-data-home", str(tmp_path), "--format", "json"],
+        ["resolve-conflict", "--input", resolution, "--format", "json"],
+    )
+
+    for command in commands:
+        code, stdout, stderr = run_cli(command, memory)
+        assert code == 0, command
+        assert stderr == ""
+        assert json.loads(stdout)["protocol_version"] == 1
+
+    assert [name for name, _ in memory.calls] == [
+        "status", "sync", "render", "open", "migrate", "resolve-conflict",
+    ]
 
 
 def prepare_managed_runtime(data_home: Path, python_source: str) -> Path:
@@ -309,7 +406,7 @@ def test_all_mutating_commands_decode_typed_inputs(tmp_path):
     )
 
     invocations = (
-        ["init", "--project-root", str(project)],
+        ["init", "--repo", "owner/memory", "--project-root", str(project)],
         ["discover", "--input", discovery],
         ["evaluate", "--input", evaluation],
         ["register", "--input", registration],
@@ -737,7 +834,7 @@ def test_result_serialization_failure_is_blocked_and_never_escapes(tmp_path):
     memory = UnserializableMemory()
 
     exit_code, stdout, stderr = run_cli(
-        ["init", "--project-root", str(project)],
+        ["init", "--repo", "owner/memory", "--project-root", str(project)],
         memory,
     )
 
@@ -995,7 +1092,7 @@ def test_global_data_home_is_forwarded_to_default_factory(tmp_path, monkeypatch)
     memory = FakeMemory()
     observed: list[Path] = []
 
-    def fake_build_service(data_home=None):
+    def fake_build_service(data_home=None, **_kwargs):
         observed.append(data_home)
         return memory
 
@@ -1475,7 +1572,7 @@ def test_launcher_missing_data_home_value_is_cli_invalid_input(tmp_path):
 
 
 def test_build_service_rejects_model_cache_symlink_before_loading_model(tmp_path, monkeypatch):
-    memory_root = tmp_path / "supermind" / "capability-memory"
+    memory_root = tmp_path / "supermind" / "memory"
     memory_root.mkdir(parents=True)
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -1492,19 +1589,16 @@ def test_build_service_rejects_model_cache_symlink_before_loading_model(tmp_path
     assert not tuple(outside.iterdir())
 
 
-def test_build_service_health_initializes_repository_before_source_registry(tmp_path, monkeypatch):
+def test_build_service_requires_initialized_event_repository(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "supermind_memory.cli.FastEmbedProvider",
         lambda *args, **kwargs: KeywordEmbeddingProvider(),
     )
 
-    memory = build_service(tmp_path)
-    try:
-        report = memory.health_check()
-        assert report.healthy is True
-        assert memory.repository.get_metadata("capability-discovery-source-registry-v1") is None
-    finally:
-        memory.close()
+    with pytest.raises(CapabilityMemoryBlocked) as captured:
+        build_service(tmp_path)
+
+    assert captured.value.code == "repository_not_initialized"
 
 
 def test_launcher_rejects_owned_directory_symlink_before_exec(tmp_path):

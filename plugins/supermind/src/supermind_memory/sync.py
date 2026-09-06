@@ -7,7 +7,7 @@ import re
 import shutil
 import stat
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
@@ -31,6 +31,7 @@ from supermind_memory.replay import ReplayError, ReplayResult, replay
 from supermind_memory.repository import CapabilityRepository
 from supermind_memory.redaction import redact_text
 from supermind_memory.renderer import RepositoryRenderer
+from supermind_memory.types import CapabilityMemoryBlocked
 
 
 MAX_PUSH_ATTEMPTS = 3
@@ -61,12 +62,19 @@ class _FileImage:
     mode: int
 
 
-class SyncBlocked(RuntimeError):
-    def __init__(self, code: str, attempts: tuple[str, ...] = ()) -> None:
+class SyncBlocked(CapabilityMemoryBlocked):
+    def __init__(
+        self, code: str, attempts: tuple[str, ...] = (), *,
+        sync_state: SyncState | None = None, event_set_digest: str | None = None,
+        commit_id: str | None = None,
+    ) -> None:
         self.code = code
         self.attempts = tuple(redact_text(item) for item in attempts)
+        self.sync_state = sync_state
+        self.event_set_digest = event_set_digest
+        self.commit_id = commit_id
         detail = f": {self.attempts[-1]}" if self.attempts else ""
-        super().__init__(f"{code}{detail}")
+        super().__init__(code, f"{code}{detail}", self.attempts)
 
 
 class RenderPort(Protocol):
@@ -131,6 +139,81 @@ class SyncCoordinator:
                 )
             result = replay(self.store.load_all())
             return self._report(SyncState.SYNCED, result, self.git.head(self.paths.checkout))
+
+    def render_repository(self) -> SyncReport:
+        """Regenerate and commit the deterministic browser from event authority."""
+        self._validate_owned_paths()
+        with FileLock(str(self._operation_lock), timeout=30):
+            current = self._validate_local_checkout()
+            online = self._validate_remote_metadata()
+            if online and self.git.fetch_branch(
+                self.paths.checkout, "origin", self.config.branch,
+            ):
+                online = self._reconcile_pending()
+                current = replay(self.store.load_all())
+            else:
+                online = False
+                self._require_healthy_projection(current)
+
+            remote_head = self.config.last_checked_remote_head
+            if remote_head is None:
+                raise SyncBlocked("repository_remote_head_missing")
+            commit_id = self._materialize_commit(
+                current,
+                current,
+                (),
+                remote_head,
+                "Render Supermind capability browser",
+            )
+            report = self._report(SyncState.COMMITTED, current, commit_id)
+            if not online:
+                return replace(report, sync_state=SyncState.PENDING_SYNC)
+            if not self.git.push(self.paths.checkout, "origin", self.config.branch):
+                return replace(report, sync_state=SyncState.PENDING_SYNC)
+            self._record_remote_head(commit_id)
+            return replace(report, sync_state=SyncState.SYNCED, remote_head=commit_id)
+
+    def resolve_conflict(
+        self, *, entity_type: str, entity_id: str, expected_head_ids: Sequence[str],
+        payload: Mapping[str, object], event_id: str, occurred_at: str,
+    ) -> SyncReport:
+        """Resolve exactly the currently observed sibling heads, never a stale subset."""
+        self._validate_owned_paths()
+        with FileLock(str(self._operation_lock), timeout=30):
+            previous = self._validate_local_checkout()
+            online = self._validate_remote_metadata()
+            incoming: tuple[AuthorityEvent, ...] = ()
+            remote_head = self.config.last_checked_remote_head
+            current = previous
+            if online and self.git.fetch_branch(self.paths.checkout, "origin", self.config.branch):
+                remote_ref = f"refs/remotes/origin/{self.config.branch}"
+                remote_head = self.git.ref_head(self.paths.checkout, remote_ref)
+                self._record_remote_head(remote_head)
+                current, incoming = self._merge_remote_events(remote_ref)
+            if remote_head is None:
+                raise SyncBlocked("repository_remote_head_missing")
+            key = (entity_type, entity_id)
+            heads = current.heads.get(key, ())
+            conflict = next((item for item in current.conflicts if (item.entity_type, item.entity_id) == key), None)
+            if conflict is None or tuple(sorted(expected_head_ids)) != tuple(sorted(heads)):
+                raise SyncBlocked("conflict_heads_stale")
+            event = AuthorityEvent.create(
+                event_id=event_id, device_id=self.config.device_id,
+                entity_type=entity_type, entity_id=entity_id, operation="resolved",
+                parent_event_ids=heads, occurred_at=occurred_at, payload=payload,
+            )
+            result = replay((*self.store.load_all(), *incoming, event))
+            commit_id = self._materialize_commit(
+                previous, result, (*incoming, event), remote_head,
+                f"Resolve Supermind memory conflict {entity_type}/{entity_id}",
+            )
+            report = self._report(SyncState.COMMITTED, result, commit_id)
+            if not online:
+                return replace(report, sync_state=SyncState.PENDING_SYNC)
+            if not self.git.push(self.paths.checkout, "origin", self.config.branch):
+                return replace(report, sync_state=SyncState.PENDING_SYNC)
+            self._record_remote_head(commit_id)
+            return replace(report, sync_state=SyncState.SYNCED, remote_head=commit_id)
 
     def _validate_owned_paths(self) -> None:
         try:
@@ -365,13 +448,32 @@ class SyncCoordinator:
         event_paths = tuple(self._event_path(event) for event in additions)
         event_existed = tuple(path.exists() for path in event_paths)
         try:
-            self.projector(result, self.repository, self.embeddings)
-        except Exception as error:
-            self._restore_projection(previous, error)
-            raise SyncBlocked("projection_failed", (str(error),)) from error
-        try:
             for event in additions:
                 self.store.append(event)
+        except Exception as error:
+            raise SyncBlocked("materialization_failed", (str(error),)) from error
+        try:
+            self.projector(result, self.repository, self.embeddings)
+        except Exception as error:
+            try:
+                self._restore_projection(previous, error)
+                commit_id = self.git.commit_all(
+                    self.paths.checkout, self.config.branch, remote_head,
+                    f"Persist Supermind memory authority before projection: {message}",
+                )
+            except Exception as persistence_error:
+                for path, existed in zip(event_paths, event_existed, strict=True):
+                    if not existed:
+                        path.unlink(missing_ok=True)
+                self.git.reset_index(self.paths.checkout)
+                raise SyncBlocked(
+                    "materialization_recovery_failed", (str(error), str(persistence_error)),
+                ) from error
+            raise SyncBlocked(
+                "projection_failed", (str(error),), sync_state=SyncState.COMMITTED,
+                event_set_digest=result.digest, commit_id=commit_id,
+            ) from error
+        try:
             self._apply_images(render_changes)
             return self.git.commit_all(
                 self.paths.checkout,

@@ -23,6 +23,8 @@ class SupermindWorkflow:
     """Apply fail-closed capability reuse at Supermind workflow boundaries."""
 
     def __init__(self, memory: CapabilityMemory) -> None:
+        if getattr(memory, "authority_mode", "events-v1") != "events-v1":
+            raise ValueError("unsupported_authority_mode")
         self.memory = memory
 
     def begin_design(
