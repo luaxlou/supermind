@@ -13,12 +13,28 @@
     "operation": {"type": "string"},
     "parent_event_ids": {"type": "array", "maxItems": 1024, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
     "occurred_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$"},
-    "payload": {"type": "object", "maxProperties": 1024, "x-supermind-limits": {"max_depth": 16, "max_items": 1024, "max_utf8_bytes": 262144}, "additionalProperties": {"$ref": "#/$defs/jsonValue"}},
+    "payload": {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue1"}},
     "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   },
   "$defs": {
     "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
-    "jsonValue": {"anyOf": [{"type": "null"}, {"type": "boolean"}, {"type": "number"}, {"type": "string"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue"}}]}
+    "jsonScalar": {"anyOf": [{"type": "null"}, {"type": "boolean"}, {"type": "number"}, {"type": "string"}]},
+    "jsonValue1": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue2"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue2"}}]},
+    "jsonValue2": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue3"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue3"}}]},
+    "jsonValue3": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue4"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue4"}}]},
+    "jsonValue4": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue5"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue5"}}]},
+    "jsonValue5": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue6"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue6"}}]},
+    "jsonValue6": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue7"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue7"}}]},
+    "jsonValue7": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue8"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue8"}}]},
+    "jsonValue8": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue9"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue9"}}]},
+    "jsonValue9": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue10"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue10"}}]},
+    "jsonValue10": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue11"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue11"}}]},
+    "jsonValue11": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue12"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue12"}}]},
+    "jsonValue12": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue13"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue13"}}]},
+    "jsonValue13": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue14"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue14"}}]},
+    "jsonValue14": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue15"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue15"}}]},
+    "jsonValue15": {"anyOf": [{"$ref": "#/$defs/jsonScalar"}, {"type": "array", "maxItems": 1024, "items": {"$ref": "#/$defs/jsonValue16"}}, {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "#/$defs/jsonValue16"}}]},
+    "jsonValue16": {"$ref": "#/$defs/jsonScalar"}
   },
   "allOf": [
     {"if": {"properties": {"entity_type": {"const": "capability"}}}, "then": {"properties": {"operation": {"enum": ["registered", "updated", "tombstoned", "resolved"]}}}},

@@ -29,7 +29,9 @@ _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _UTC_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z")
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_PAYLOAD_DEPTH = 16
-_MAX_PAYLOAD_ITEMS = 1_024
+# Structural limits are mirrored by the v1 JSON Schema.  The UTF-8 byte limit
+# is an input-transport safety boundary and intentionally remains decoder-only.
+_MAX_CONTAINER_ITEMS = 1_024
 _MAX_PAYLOAD_BYTES = 256 * 1024
 _MAX_PARENT_EVENT_IDS = 1_024
 _MARKER_TEXT = re.compile(r"\S(?:.*\S)?\Z")
@@ -389,31 +391,38 @@ def _thaw_json_value(value: object) -> JSONValue:
 def _validate_payload(value: object) -> dict[str, JSONValue]:
     if type(value) is not dict:
         raise EventValidationError("payload must be a JSON object")
-    count = _validate_json_value(value, depth=0)
-    if count > _MAX_PAYLOAD_ITEMS:
-        raise EventValidationError("payload contains too many values")
+    _validate_json_value(value, depth=0)
     payload = dict(value)
     if len(canonical_json(payload)) > _MAX_PAYLOAD_BYTES:
         raise EventValidationError("payload is too large")
     return payload  # type: ignore[return-value]
 
 
-def _validate_json_value(value: object, *, depth: int) -> int:
+def _validate_json_value(value: object, *, depth: int) -> None:
     if depth > _MAX_PAYLOAD_DEPTH:
         raise EventValidationError("payload is nested too deeply")
     if value is None or type(value) in {bool, int, str}:
-        return 1
+        return
     if type(value) is float:
         if not math.isfinite(value):
             raise EventValidationError("payload numbers must be finite")
-        return 1
+        return
     if type(value) is list:
-        return 1 + sum(_validate_json_value(item, depth=depth + 1) for item in value)
+        if depth >= _MAX_PAYLOAD_DEPTH:
+            raise EventValidationError("payload is nested too deeply")
+        if len(value) > _MAX_CONTAINER_ITEMS:
+            raise EventValidationError("payload container contains too many values")
+        for item in value:
+            _validate_json_value(item, depth=depth + 1)
+        return
     if type(value) is dict:
-        total = 1
+        if depth >= _MAX_PAYLOAD_DEPTH:
+            raise EventValidationError("payload is nested too deeply")
+        if len(value) > _MAX_CONTAINER_ITEMS:
+            raise EventValidationError("payload container contains too many values")
         for key, item in value.items():
             if type(key) is not str:
                 raise EventValidationError("payload object keys must be strings")
-            total += _validate_json_value(item, depth=depth + 1)
-        return total
+            _validate_json_value(item, depth=depth + 1)
+        return
     raise EventValidationError(f"payload contains unsupported {type(value).__name__}")

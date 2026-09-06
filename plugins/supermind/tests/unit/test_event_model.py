@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from jsonschema.validators import Draft202012Validator
 
 from supermind_memory.event_model import (
     AuthorityEvent,
@@ -168,7 +169,7 @@ def test_marker_requires_complete_v1_repository_identity():
     [
         {"value": float("inf")},
         {"value": _deep_value()},
-        {"value": list(range(1_024))},
+        {"value": list(range(1_025))},
     ],
 )
 def test_event_rejects_nonfinite_or_unbounded_payloads(payload):
@@ -244,19 +245,61 @@ def test_event_rejects_more_parents_than_the_schema_limit():
         _event(parent_event_ids=tuple(f"parent-{index}" for index in range(1_025)))
 
 
-def test_schemas_declare_the_decoder_limits_and_marker_whitespace_contract():
+def _nested_value(containers):
+    value = "leaf"
+    for _ in range(containers):
+        value = [value]
+    return value
+
+
+def _event_document_with_payload(payload):
+    document = _event().to_document()
+    document["payload"] = payload
+    return _rehash(document)
+
+
+@pytest.mark.parametrize(
+    ("payload", "accepted"),
+    [
+        ({f"key-{index}": index for index in range(1_024)}, True),
+        ({f"key-{index}": index for index in range(1_025)}, False),
+        ({"nested": _nested_value(15)}, True),
+        ({"nested": _nested_value(16)}, False),
+        ({"items": list(range(1_024))}, True),
+        ({"items": list(range(1_025))}, False),
+        ({"nested": {f"key-{index}": index for index in range(1_024)}}, True),
+        ({"nested": {f"key-{index}": index for index in range(1_025)}}, False),
+    ],
+)
+def test_standard_schema_and_decoder_agree_on_structural_payload_boundaries(payload, accepted):
     schema_root = Path(__file__).parents[2] / "schemas" / "v1"
     event_schema = json.loads((schema_root / "event.schema.json").read_text())
-    marker_schema = json.loads((schema_root / "memory.schema.json").read_text())
+    document = _event_document_with_payload(payload)
 
-    assert event_schema["properties"]["schema_version"] == {"type": "integer", "const": 1}
-    assert event_schema["properties"]["parent_event_ids"]["maxItems"] == 1_024
-    assert event_schema["properties"]["payload"]["x-supermind-limits"] == {
-        "max_depth": 16,
-        "max_items": 1_024,
-        "max_utf8_bytes": 262_144,
-    }
-    assert marker_schema["properties"]["format"] == {"type": "integer", "const": 1}
-    assert marker_schema["properties"]["event_schema_versions"]["items"] == {"type": "integer", "const": 1}
-    assert marker_schema["properties"]["renderer_version"]["pattern"] == "^\\S(?:.*\\S)?$"
-    assert marker_schema["properties"]["repository_id"]["pattern"] == "^\\S(?:.*\\S)?$"
+    assert Draft202012Validator(event_schema).is_valid(document) is accepted
+    if accepted:
+        assert AuthorityEvent.from_bytes(canonical_json(document)).to_document() == document
+    else:
+        with pytest.raises(EventValidationError):
+            AuthorityEvent.from_bytes(canonical_json(document))
+
+
+@pytest.mark.parametrize("count, accepted", [(1_024, True), (1_025, False)])
+def test_standard_schema_and_decoder_agree_on_parent_count_boundary(count, accepted):
+    schema_root = Path(__file__).parents[2] / "schemas" / "v1"
+    event_schema = json.loads((schema_root / "event.schema.json").read_text())
+    document = _event().to_document()
+    document["parent_event_ids"] = [f"parent-{index:04d}" for index in range(count)]
+    _rehash(document)
+
+    assert Draft202012Validator(event_schema).is_valid(document) is accepted
+    if accepted:
+        assert AuthorityEvent.from_bytes(canonical_json(document)).to_document() == document
+    else:
+        with pytest.raises(EventValidationError):
+            AuthorityEvent.from_bytes(canonical_json(document))
+
+
+def test_decoder_retains_a_utf8_transport_size_boundary_outside_schema_structure():
+    with pytest.raises(EventValidationError, match="too large"):
+        _event(payload={"value": "中" * 100_000})
