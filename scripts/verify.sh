@@ -109,6 +109,7 @@ docs/product/green-planet-login-boundary.md
 docs/product/plans/2026-09-04-capability-memory.md
 docs/product/plans/2026-09-06-capability-memory-hardening.md
 docs/superpowers/plans/2026-09-06-distributed-capability-memory.md
+docs/usage.md
 plugins/supermind/.codex-plugin/plugin.json
 plugins/supermind/scripts/bootstrap.py
 plugins/supermind/scripts/capability-memory
