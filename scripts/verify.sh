@@ -106,6 +106,7 @@ docs/product/2026-09-06-distributed-capability-memory-design.md
 docs/product/capability-memory-purge.md
 docs/product/capability-memory-bootstrap.md
 docs/product/green-planet-login-boundary.md
+docs/product/supermind-decision-model.md
 docs/product/plans/2026-09-04-capability-memory.md
 docs/product/plans/2026-09-06-capability-memory-hardening.md
 docs/superpowers/plans/2026-09-06-distributed-capability-memory.md
