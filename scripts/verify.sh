@@ -126,6 +126,7 @@ plugins/supermind/skills/proportionate-verification/agents/openai.yaml
 plugins/supermind/skills/supermind/SKILL.md
 plugins/supermind/skills/supermind/agents/openai.yaml
 plugins/supermind/skills/supermind/references/actions.md
+plugins/supermind/skills/supermind/references/abstraction-review.md
 plugins/supermind/skills/supermind/references/capability-routing.md
 plugins/supermind/skills/supermind/references/core-decision.md
 plugins/supermind/skills/supermind/references/scenarios.md
@@ -160,7 +161,7 @@ if find "$project_root" \
   exit 1
 fi
 
-for reference in actions.md capability-routing.md product-state.md; do
+for reference in actions.md abstraction-review.md capability-routing.md product-state.md; do
   grep -Fq "references/$reference" "$skill_root/SKILL.md"
 done
 
