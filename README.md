@@ -54,4 +54,4 @@ codex plugin add supermind@supermind
 
 ## 进一步了解
 
-[详细使用指南](docs/usage.md) · [能力库建设与自举](docs/product/capability-memory-bootstrap.md)
+[详细使用指南](docs/usage.md)
