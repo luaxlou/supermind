@@ -7,9 +7,11 @@ from collections.abc import Callable
 
 from supermind_memory.compatibility import ContractFit, contract_fit, metadata_compatible
 from supermind_memory.redaction import redact_requirement
+from supermind_memory.quality import quality_issues
 from supermind_memory.search import requirement_declares_contract
 from supermind_memory.source_resolution import source_available
 from supermind_memory.types import (
+    AbstractionStatus,
     CandidateMatch,
     Capability,
     Lifecycle,
@@ -102,6 +104,16 @@ class ReuseDecisionEngine:
                         "and the remaining evidence and expected-value gates passed."
                     ),
                 )
+        if selected_assessment is None:
+            pending = next((match for match, capability, fit in assessed
+                            if capability is not None and capability.abstraction_status in
+                            {AbstractionStatus.PENDING, AbstractionStatus.IN_PROGRESS}
+                            and not eligibility_reasons(requirement, match, capability,
+                                contract_proof=fit, require_abstraction=False)), None)
+            if pending is not None:
+                selected, action = pending, "abstract"
+                rationale = ("Source implementation found, but abstraction is incomplete.",
+                             "Assess and extract a business-independent capability before proposing reuse.")
         return ReuseDecision(
             requirement=requirement,
             search_result=result,
@@ -117,6 +129,7 @@ def eligibility_reasons(
     capability: Capability | None,
     *,
     contract_proof: ContractFit | None = None,
+    require_abstraction: bool = True,
 ) -> tuple[str, ...]:
     reasons = list(match.rejection_reasons)
     if capability is None:
@@ -124,7 +137,10 @@ def eligibility_reasons(
             reasons.append("contract mismatch")
         reasons.append("record missing")
         return tuple(dict.fromkeys(reasons))
+    reasons.extend(quality_issues(capability))
     fit = contract_proof or contract_fit(capability, requirement)
+    if require_abstraction and capability.abstraction_status is not AbstractionStatus.ABSTRACTED:
+        reasons.append("abstraction incomplete: " + capability.abstraction_status.value)
     if requirement_declares_contract(requirement) and fit.score <= 0.0:
         reasons.append("contract mismatch")
     if not metadata_compatible(capability, requirement):

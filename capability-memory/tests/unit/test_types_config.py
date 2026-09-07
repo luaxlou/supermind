@@ -107,7 +107,7 @@ def test_memory_paths_are_exact_owned_children_of_the_capability_memory_root(tmp
 def test_domain_dataclasses_are_frozen_and_keep_their_declared_fields():
     expected_fields = {
         RequirementProfile: ("id", "project_id", "intent", "contract", "category_hint", "stack", "constraints", "quality_requirements", "runtime", "platform", "license"),
-        Capability: ("id", "name", "summary", "category_path", "facets", "contract", "constraints", "artifact_type", "source_uri", "source_revision", "content_hash", "owner", "license", "stack", "runtime", "platform", "dependencies", "compatibility", "lifecycle", "confidence", "expected_net_value", "embedding_generation", "created_at", "updated_at", "last_verified_at"),
+        Capability: ("id", "name", "summary", "category_path", "facets", "contract", "constraints", "artifact_type", "source_uri", "source_revision", "content_hash", "owner", "license", "stack", "runtime", "platform", "dependencies", "compatibility", "lifecycle", "confidence", "expected_net_value", "embedding_generation", "created_at", "updated_at", "last_verified_at", "abstraction_status"),
         Evidence: ("id", "capability_id", "source_project", "evidence_type", "outcome", "metric_name", "metric_value", "confidence", "observed_at", "supporting_uri", "integration_effort", "benefit", "failure_risk"),
         Relationship: ("id", "source_id", "target_id", "relationship_type", "compatibility", "evidence_ids"),
         Event: ("id", "capability_id", "event_type", "source_context", "occurred_at", "previous_state", "resulting_state", "reason"),
@@ -123,7 +123,7 @@ def test_domain_dataclasses_are_frozen_and_keep_their_declared_fields():
         DiscoveryResult: ("capabilities", "sources_scanned"),
         EvaluationResult: ("capability", "expected_net_value", "accepted", "reasons"),
         ReuseResult: ("capability_id", "project", "succeeded", "integration_effort", "benefit", "failure_reason"),
-        ReuseDecision: ("requirement", "search_result", "action", "selected_capability_id", "rationale"),
+        ReuseDecision: ("requirement", "search_result", "action", "selected_capability_id", "rationale", "human_confirmation_required", "abstraction_review_required", "execution_authorized"),
         MemoryPaths: ("root", "config", "checkout", "database", "model_cache", "locks", "generations"),
     }
 

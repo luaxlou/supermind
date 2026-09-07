@@ -26,8 +26,8 @@ remote for immutable, structured memory events and generated Markdown views. Git
 central database and is not required to answer a search from an already healthy local copy.
 
 The repository root `README.md` is the primary human browser. It renders the complete capability
-library as a categorized, nested, collapsible index using GitHub-native `<details>` and `<summary>`
-elements. Detail Markdown pages and Mermaid diagrams provide deeper inspection. The product runs no
+library as an expanded, categorized Markdown tree with linked capability leaves.
+Detail Markdown pages and Mermaid diagrams provide deeper inspection. The product runs no
 permanent web service, opens no local port, publishes no GitHub Pages site, and generates no custom
 HTML application.
 
@@ -135,12 +135,12 @@ events/
         <event-id>.json
 catalog/
   README.md
-  code-and-components.md
-  product-and-business.md
-  design-and-experience.md
-  engineering-and-methods.md
-  tools-and-integrations.md
-  data-and-intelligence.md
+  code.md
+  product.md
+  design.md
+  engineering.md
+  tools.md
+  data.md
 capabilities/
   <capability-id>.md
 demands/
@@ -262,46 +262,86 @@ embedded memory or weaker search path.
 
 ## GitHub-native capability browser
 
-The repository root `README.md` is generated as a compact, collapsible catalog. A person should be
+Current layout: retain category descriptions and abstraction groups, but render capability lists
+as four-column tables under bilingual subcategory headings: 名称, 英文标识, 状态, 说明.
+HTML column-width hints are 20%, 25%, 10%, 45%; names and states do not wrap. Keep one capability per row.
+Homepage top-level category headings are plain text, while capability names link to details. Recent changes use
+a concise list. This supersedes the earlier tree layout; state, identity, and source records are unchanged.
+
+Homepage revision: introduce Supermind and the purpose/use of this capability repository in Chinese.
+Use concise human category labels: 代码、产品、设计、工程、工具、数据. Preserve stable internal
+taxonomy keys and links; show only populated categories on the homepage. Prefer Chinese names and
+summaries, edited through `describe` without changing source contracts or verification. Keep event
+digests in the render manifest, not the homepage. Show dates without internal timestamp precision.
+Remove the homepage relationship overview; relationship diagnostics remain in the dedicated page.
+
+The repository root `README.md` is generated as an expanded, grouped tree. A person should be
 able to understand the library without opening raw JSON or learning CLI commands.
 
-The stable top-level taxonomy remains:
+The canonical top-level taxonomy is:
 
-1. Code and components
-2. Product and business
-3. Design and experience
-4. Engineering and methods
-5. Tools and integrations
-6. Data and intelligence
+1. 代码 (`code`)
+2. 产品 (`product`)
+3. 设计 (`design`)
+4. 工程 (`engineering`)
+5. 工具 (`tools`)
+6. 数据 (`data`)
 
-Each category is a top-level `<details>` block. Its `<summary>` shows the human label, capability
-count, maturity distribution, and one-line value statement. Each capability inside it is a nested
-`<details>` block whose summary shows the name, maturity, availability, and concise purpose.
+Each category includes a description of what belongs there and the conditions for reuse. Within
+each category, separate extracted capabilities from sources awaiting abstraction. The persisted
+`abstraction_status` is independent of the existing verification lifecycle: `pending`, `in_progress`,
+`abstracted`, or `not_extracting`. A legacy or newly discovered record defaults to `pending`; original
+business names and verification evidence are retained. Pending positive-fit sources produce an
+`abstract` recommendation, never `reuse` or `adapt`. Every eventual use still needs human approval.
+
+The explicit `reorganize` command appends migration events for current category paths, missing
+abstraction states, demand category hints, and discovery exclusions; historical events remain
+unchanged. Derived projections rebuild the added status column, and old renderer-owned category
+files are replaced with canonical paths. `set-abstraction` records a rationale. Completion requires
+a separate extracted record, source links, positive value and verification evidence; renaming the
+original business implementation is not abstraction. Semantic generality still requires review.
+
+Each category is a visible list root. Nested lists preserve every subcategory in the category path.
+Capability leaves link to their cards and show their lifecycle and concise purpose. No root item
+requires expanding an HTML disclosure. Inclusion and verification do not imply reuse eligibility.
 
 Example generated structure:
 
-```html
-<details>
-<summary>代码与组件 · 8 项 · 3 项已验证</summary>
-
-用于直接复用到产品实现中的模块、组件和库。
-
-<details>
-<summary>登录与身份服务 · 推荐复用 · 当前可用</summary>
-
-- 解决什么：统一手机号身份和登录会话。
-- 适合什么：需要手机号登录的移动端产品。
-- 复用依据：2 次成功验证，1 次独立项目复用。
-- 来源：私有项目中的已验证实现。
-- [打开完整能力卡](capabilities/example-login.md)
-
-</details>
-</details>
+```markdown
+- 代码与组件
+  - 身份认证
+    - [可配置身份认证](capabilities/example-login.md) · 候选 — 通用认证契约
+- 工程与方法
+  - 质量保障
+    - [契约测试](capabilities/example-contract-tests.md) · 已验证
 ```
 
 Raw similarity scores and internal identifiers are not the primary labels. They may appear in a
-detail page when needed for diagnosis. Tools and integrations are collapsed by default so observed
-tool inventory does not overwhelm verified reusable product capabilities.
+detail page when needed for diagnosis. Tools and integrations stay in their own visible category.
+
+### Human-confirmed, abstract reuse
+
+Library management uses `remove --category <root> --category <subgroup>` for a read-only preview.
+`--confirm --expected-digest <preview-digest>` tombstones those entries only while the reviewed
+authority is unchanged. References block removal; there is no automatic cascade. `--exclude-future`
+persists the category prefix in authoritative metadata, honored by automatic discovery on every
+device running the current CLI. Invalid policy blocks discovery. Source artifacts are untouched,
+history remains recoverable, and the normal transaction regenerates and synchronizes the README.
+Inspection and management initialize without scanning projects.
+
+Automatic discovery records candidates and sources, not universal reuse promises. Every proposed
+reuse or adaptation requires assessment of a business-independent contract, configurable variation
+points, source-product coupling, verification, and positive net benefit. Concrete business flows
+remain source material unless an evidenced abstraction is extracted. Historical entries have not
+been bulk-certified under this policy and must be assessed before use.
+
+`begin-design` returns a recommendation, never authorization. For reuse/adapt it reports
+`abstraction_review_required: true`, `human_confirmation_required: true`, and
+`execution_authorized: false`. The consuming Supermind agent must present the concrete capability,
+revision, target use, abstraction boundary, changes and cost, and pause for explicit human approval.
+Approval is per use; a previous approval, lifecycle status, or general build request is insufficient.
+The CLI does not integrate product code or verify conversational consent; this execution boundary
+is enforced by the plugin workflow, not by a fabricated approval token.
 
 The root page also contains:
 
@@ -462,7 +502,7 @@ Approval of this design confirms these product choices:
 - local-first commits may exist temporarily as an explicit `pending_sync` state when a push fails;
 - synchronized content is sanitized plaintext in a mandatory private repository so GitHub can render
   the browser;
-- the generated, collapsible root README is the default browser, not a custom web application;
+- the generated, expanded root README tree is the default browser, not a custom web application;
 - event JSON is authoritative while Markdown and local search indexes are derived; and
 - after verified migration, the independent Python CLI is the only memory implementation available
   to Supermind.

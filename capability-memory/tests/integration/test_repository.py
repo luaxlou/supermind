@@ -20,10 +20,11 @@ from supermind_memory.types import ArtifactType, Capability, Event, Evidence, Li
 @pytest.fixture
 def capability() -> Capability:
     return Capability(
+        abstraction_status="abstracted",
         id="capability-1",
         name="Login",
         summary="OAuth login",
-        category_path=("Code and components", "Identity and access"),
+        category_path=("code", "Identity and access"),
         facets=("authentication",),
         contract="OAuth callback",
         constraints=("requires client secret",),
@@ -708,6 +709,7 @@ def test_schema_constants_and_all_arrow_table_schemas_are_exact():
             ("confidence", pa.float64(), False), ("expected_net_value", pa.float64(), False),
             ("embedding_generation", pa.string(), False), ("created_at", pa.string(), False),
             ("updated_at", pa.string(), False), ("last_verified_at", pa.string(), True),
+            ("abstraction_status", pa.string(), False),
             ("vector", pa.list_(pa.float32(), 384), False), ("search_text", pa.string(), False),
         ),
         "evidence": (
@@ -762,7 +764,7 @@ def test_capability_search_text_covers_all_retrieval_fields(capability, vector):
         "Login",
         "OAuth login",
         "OAuth callback",
-        "Code and components",
+        "code",
         "Identity and access",
         "authentication",
         "Python",

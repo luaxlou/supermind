@@ -17,8 +17,9 @@ def _result(identifier: str | None):
     if identifier is None:
         return replay(())
     capability = Capability(
+        abstraction_status="abstracted",
         id=identifier, name=identifier.title(), summary="Reusable module",
-        category_path=("Code and components", "Modules"), facets=("module",),
+        category_path=("code", "Modules"), facets=("module",),
         contract="Provide a module", constraints=(), artifact_type=ArtifactType.CODE,
         source_uri="private source", source_revision="abc", content_hash="a" * 64,
         owner="test", license="MIT", stack=("python",), runtime=("python",),
@@ -108,12 +109,33 @@ def test_rendering_is_byte_identical_and_manifest_valid(tmp_path):
     assert manifest.files["README.md"]
 
 
+def test_taxonomy_migration_removes_only_owned_legacy_category_page(tmp_path):
+    result = _result("login")
+    write_rendered_repository(tmp_path, render_files(result))
+    modern = tmp_path / "catalog/code.md"
+    legacy = tmp_path / "catalog/code-and-components.md"
+    modern.rename(legacy)
+    manifest_path = tmp_path / ".supermind/render-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["renderer_version"] = "4"
+    manifest["files"]["catalog/code-and-components.md"] = manifest["files"].pop("catalog/code.md")
+    manifest_path.write_text(json.dumps(manifest))
+    note = tmp_path / "catalog/my-notes.md"
+    note.write_text("keep this")
+    write_rendered_repository(tmp_path, render_files(result))
+    assert modern.is_file()
+    assert not legacy.exists()
+    assert note.read_text() == "keep this"
+
+
 def test_invalid_new_manifest_blocks_before_overwriting_repository(tmp_path):
     existing = tmp_path / "README.md"
     existing.write_text("user state\n")
     files = dict(render_files(_result("login")))
     manifest_path = PurePosixPath(".supermind/render-manifest.json")
-    files[manifest_path] = files[manifest_path].replace(b'"renderer_version":"1"', b'"renderer_version":"2"')
+    document = json.loads(files[manifest_path])
+    document["renderer_version"] = "unsupported-version"
+    files[manifest_path] = json.dumps(document).encode()
 
     with pytest.raises(RenderBlocked, match="render_manifest_invalid"):
         write_rendered_repository(tmp_path, files)

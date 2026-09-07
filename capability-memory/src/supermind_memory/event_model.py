@@ -79,6 +79,7 @@ class MemoryMarker:
     renderer_version: str
     repository_id: str
     default_branch: str
+    history_epoch: str | None = None
 
     def __post_init__(self) -> None:
         versions = tuple(self.event_schema_versions)
@@ -105,6 +106,7 @@ class MemoryMarker:
             document["renderer_version"],
             document["repository_id"],
             document["default_branch"],
+            document.get("history_epoch"),
         )
 
     def to_document(self) -> dict[str, object]:
@@ -114,6 +116,7 @@ class MemoryMarker:
             "format": self.format,
             "renderer_version": self.renderer_version,
             "repository_id": self.repository_id,
+            **({"history_epoch": self.history_epoch} if self.history_epoch is not None else {}),
         }
 
     def to_bytes(self) -> bytes:
@@ -299,7 +302,10 @@ def _validate_event_document(document: Mapping[str, object], *, verify_hash: boo
 
 
 def _validate_marker_document(document: Mapping[str, object]) -> None:
-    _require_exact_keys(document, _MARKER_FIELDS, "memory marker")
+    _require_exact_keys(document, _MARKER_FIELDS | ({"history_epoch"} if "history_epoch" in document else set()), "memory marker")
+    if "history_epoch" in document and (not isinstance(document["history_epoch"], str)
+                                       or not _HASH.fullmatch(document["history_epoch"])):
+        raise EventValidationError("invalid history epoch")
     if type(document["format"]) is not int or document["format"] != 1:
         raise EventValidationError("unsupported memory format")
     versions = document["event_schema_versions"]

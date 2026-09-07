@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
@@ -19,6 +19,7 @@ from supermind_memory.event_model import AuthorityEvent, canonical_json
 from supermind_memory.health import HealthManager
 from supermind_memory.git_client import SubprocessCommandRunner
 from supermind_memory.lifecycle import next_lifecycle
+from supermind_memory.quality import audit_capability, quality_issues
 from supermind_memory.repository import CapabilityRepository, validate_evidence
 from supermind_memory.projection import compare_projection
 from supermind_memory.replay import ReplayResult, replay
@@ -37,8 +38,9 @@ from supermind_memory.schema import EMBEDDING_DIMENSION
 from supermind_memory.scoring import expected_net_value
 from supermind_memory.search import CapabilitySearch
 from supermind_memory.source_resolution import resolve_source, source_available
-from supermind_memory.taxonomy import validate_category_path
+from supermind_memory.taxonomy import canonical_category_path, validate_category_path
 from supermind_memory.types import (
+    AbstractionStatus,
     Capability,
     CapabilityMemoryBlocked,
     DiscoveryContext,
@@ -60,6 +62,7 @@ from supermind_memory.types import (
 
 MAX_CONSISTENCY_RESTARTS = 3
 MAX_RETRIEVAL_REPAIRS = 1
+DISCOVERY_EXCLUSIONS_KEY = "discovery-excluded-category-prefixes-v1"
 
 
 def _authority_mutation(method):
@@ -243,6 +246,153 @@ class CapabilityMemory:
     def get(self, capability_id: str) -> Capability | None:
         self._assert_event_projection()
         return self.repository.get_capability(capability_id)
+
+    @_authority_mutation
+    def reorganize(self) -> dict:
+        """Persist the explicit taxonomy/status migration without rewriting historical events."""
+        self._assert_event_projection()
+        self._ensure_healthy()
+        current = replay(self._require_sync_coordinator().store.load_all())
+        specifications = []
+        count = 0
+        for item in self.repository.list_capabilities():
+            desired = json.loads(json.dumps(asdict(item)))
+            if current.entities[("capability", item.id)].to_document()["payload"] != desired:
+                specifications.append(("capability", item.id, "updated", desired))
+                count += 1
+        for (kind, identifier), event in current.entities.items():
+            if kind == "demand":
+                payload = event.to_document()["payload"]
+                requirement = payload["observation"]["requirement"]
+                old = requirement.get("category_hint", [])
+                canonical = list(canonical_category_path(tuple(old)))
+                if old != canonical:
+                    requirement["category_hint"] = canonical
+                    specifications.append((kind, identifier, event.operation, payload))
+        excluded = self.repository.get_metadata(DISCOVERY_EXCLUSIONS_KEY)
+        if excluded is not None:
+            canonical = [list(path) for path in self._discovery_exclusions()]
+            if canonical != excluded:
+                specifications.append(("metadata", DISCOVERY_EXCLUSIONS_KEY, "set", {"value": canonical}))
+        report = self._commit_events(tuple(specifications)) if specifications else None
+        return {"capabilities_updated": count, "events_written": len(specifications), "sync": report}
+
+    @_authority_mutation
+    def set_abstraction(self, capability_id: str, status: str, rationale: str,
+                        source_ids: Sequence[str] = (), evidence_ids: Sequence[str] = ()) -> Capability:
+        """Record a reviewed abstraction decision separately from verification lifecycle."""
+        status = AbstractionStatus(status)
+        if not rationale.strip():
+            raise ValueError("abstraction rationale is required")
+        self._assert_event_projection()
+        self._ensure_healthy()
+        item = self.get(capability_id)
+        if item is None:
+            raise ValueError("unknown capability id")
+        if status is AbstractionStatus.ABSTRACTED:
+            if not source_ids or capability_id in source_ids or any(self.get(key) is None for key in source_ids):
+                raise ValueError("an extracted capability must link to separate, existing source capabilities")
+            evidence = {entry.id: entry for entry in self.repository.list_evidence(capability_id)}
+            if not evidence_ids or any(key not in evidence or evidence[key].outcome.casefold() not in
+                                      {"passed", "success", "succeeded", "successful", "verified"} for key in evidence_ids):
+                raise ValueError("successful verification evidence for the extracted capability is required")
+            if not item.contract.strip() or item.last_verified_at is None or item.expected_net_value <= 0:
+                raise ValueError("a verified general contract with positive net value is required")
+        updated = replace(item, abstraction_status=status, updated_at=_utc_now())
+        assessment = {"capability_id": capability_id, "status": status.value,
+                      "rationale": redact_text(rationale), "source_ids": list(source_ids),
+                      "evidence_ids": list(evidence_ids)}
+        self._commit_events((("capability", capability_id, "updated", asdict(updated)),
+                             ("metadata", "abstraction-assessment-" + capability_id, "set", {"value": assessment})))
+        return updated
+
+    @_authority_mutation
+    def describe_capabilities(self, descriptions: Sequence[Mapping[str, str]]) -> tuple[Capability, ...]:
+        """Edit display text without changing source contracts or verification claims."""
+        self._assert_event_projection()
+        self._ensure_healthy()
+        updated = []
+        seen = set()
+        for item in descriptions:
+            if set(item) != {"id", "name", "summary"} or not all(
+                isinstance(value, str) and value.strip() for value in item.values()
+            ):
+                raise ValueError("each description requires non-empty id, name and summary")
+            if item["id"] in seen:
+                raise ValueError("duplicate capability id")
+            seen.add(item["id"])
+            existing = self.get(item["id"])
+            if existing is None:
+                raise ValueError("unknown capability id")
+            updated.append(replace(existing, name=redact_text(item["name"]),
+                                   summary=redact_text(item["summary"]), updated_at=_utc_now()))
+        if updated:
+            self._commit_events(tuple(("capability", item.id, "updated", asdict(item)) for item in updated))
+        return tuple(updated)
+
+    def _discovery_exclusions(self) -> tuple[tuple[str, ...], ...]:
+        value = self.repository.get_metadata(DISCOVERY_EXCLUSIONS_KEY)
+        if value is None:
+            return ()
+        try:
+            if not isinstance(value, list):
+                raise ValueError("expected category list")
+            for path in value:
+                if not isinstance(path, list) or not all(isinstance(x, str) and x.strip() for x in path):
+                    raise ValueError("invalid category prefix")
+                validate_category_path(tuple(path))
+        except ValueError as error:
+            raise CapabilityMemoryBlocked("discovery_policy_invalid", str(error), ()) from error
+        return tuple(canonical_category_path(tuple(path)) for path in value)
+
+    @_authority_mutation
+    def remove_category(self, category: tuple[str, ...], *, confirm: bool = False,
+                        expected_digest: str | None = None, exclude_future: bool = False) -> dict:
+        """Preview exact targets; remove only a human-confirmed, unchanged authority snapshot."""
+        category = canonical_category_path(category)
+        validate_category_path(category)
+        if any(not isinstance(part, str) or not part.strip() for part in category):
+            raise ValueError("category components must not be empty")
+        self._assert_event_projection()
+        self._ensure_healthy()
+        current = replay(self._require_sync_coordinator().store.load_all())
+        selected = sorted((item for item in self.repository.list_capabilities()
+                           if item.category_path[:len(category)] == category), key=lambda item: item.id)
+        identifiers = {item.id for item in selected}
+
+        def references_target(value: object) -> bool:
+            if isinstance(value, str):
+                return value in identifiers
+            if isinstance(value, Mapping):
+                return any(references_target(item) for item in value.values())
+            if isinstance(value, (list, tuple)):
+                return any(references_target(item) for item in value)
+            return False
+
+        references = [f"{kind}/{identifier}" for (kind, identifier), event in current.entities.items()
+                      if (kind != "capability" or identifier not in identifiers)
+                      and references_target(event.payload)]
+        result = {"category": category, "count": len(selected),
+                  "capabilities": [{"id": item.id, "name": item.name} for item in selected],
+                  "event_set_digest": current.digest, "references": references,
+                  "exclude_future": exclude_future, "applied": False}
+        if not confirm:
+            return result
+        if not expected_digest or expected_digest != current.digest:
+            raise CapabilityMemoryBlocked("removal_preview_stale", "A current removal preview is required", ())
+        if references:
+            raise CapabilityMemoryBlocked("capability_referenced", "Removal blocked by references", tuple(references))
+        specifications = [("capability", item.id, "tombstoned",
+                           {"reason": "human-confirmed category removal", "category_path": list(category)})
+                          for item in selected]
+        if exclude_future:
+            exclusions = sorted(set((*self._discovery_exclusions(), category)))
+            specifications.append(("metadata", DISCOVERY_EXCLUSIONS_KEY, "set",
+                                   {"value": [list(path) for path in exclusions]}))
+        if specifications:
+            result["sync"] = self._commit_events(tuple(specifications))
+        result["applied"] = True
+        return result
 
     @_authority_mutation
     def observe_unmet_requirement(
@@ -458,9 +608,25 @@ class CapabilityMemory:
         self._bind_authority_digest(self._last_sync_report.event_set_digest)
         return {"migration": report, "sync": self._last_sync_report}
 
+    def audit(self, capability_id: str | None = None) -> dict:
+        """Inspect existing records without discovery or authority mutations."""
+        self._ensure_healthy()
+        capabilities = self.repository.list_capabilities()
+        if capability_id is not None:
+            capabilities = tuple(item for item in capabilities if item.id == capability_id)
+            if not capabilities:
+                raise ValueError(f"capability not found: {capability_id}")
+        reports = [audit_capability(item, self.repository.list_evidence(item.id))
+                   for item in capabilities]
+        return {"count": len(reports), "capabilities": reports, "reuse_authorized": False}
+
     def evaluate(self, candidate: Capability, inputs: ValueInputs) -> EvaluationResult:
         candidate = redact_capability(candidate)
         value = expected_net_value(inputs)
+        issues = quality_issues(candidate)
+        if issues:
+            return EvaluationResult(capability=None, expected_net_value=value,
+                                    accepted=False, reasons=issues)
         if not math.isfinite(value) or value <= 0:
             return EvaluationResult(
                 capability=None,
@@ -495,6 +661,9 @@ class CapabilityMemory:
         self._ensure_healthy()
         if not math.isfinite(capability.expected_net_value) or capability.expected_net_value <= 0:
             raise ValueError("capability expected net value must be positive")
+        issues = quality_issues(capability)
+        if issues:
+            raise ValueError("capability quality check failed: " + ", ".join(issues))
         if any(item.capability_id != capability.id for item in evidence):
             raise ValueError("all evidence must reference the registered capability")
         for item in evidence:
@@ -908,6 +1077,7 @@ class CapabilityMemory:
 
     @_authority_mutation
     def _discover_and_persist(self, context: DiscoveryContext) -> DiscoveryResult:
+        exclusions = self._discovery_exclusions()
         metadata = None
         if isinstance(self.discovery_engine, CapabilityDiscovery):
             discovered, metadata = self.discovery_engine.discover_staged(context)
@@ -915,7 +1085,8 @@ class CapabilityMemory:
             discovered = self.discovery_engine.discover(context)
         discovered = replace(
             discovered,
-            capabilities=tuple(redact_capability(item) for item in discovered.capabilities),
+            capabilities=tuple(redact_capability(item) for item in discovered.capabilities
+                               if not any(item.category_path[:len(prefix)] == prefix for prefix in exclusions)),
             sources_scanned=tuple(redact_uri(source) for source in discovered.sources_scanned),
         )
         if self.sync_coordinator is not None:

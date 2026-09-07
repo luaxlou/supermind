@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from supermind_memory.taxonomy import canonical_category_path
+
+
+class AbstractionStatus(str, Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    ABSTRACTED = "abstracted"
+    NOT_EXTRACTING = "not_extracting"
 
 
 class Lifecycle(str, Enum):
@@ -54,6 +62,9 @@ class RequirementProfile:
     platform: tuple[str, ...] = ()
     license: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "category_hint", canonical_category_path(self.category_hint))
+
 
 @dataclass(frozen=True)
 class Capability:
@@ -82,6 +93,11 @@ class Capability:
     created_at: str
     updated_at: str
     last_verified_at: str | None
+    abstraction_status: AbstractionStatus = AbstractionStatus.PENDING
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "category_path", canonical_category_path(self.category_path))
+        object.__setattr__(self, "abstraction_status", AbstractionStatus(self.abstraction_status))
 
 
 @dataclass(frozen=True)
@@ -213,6 +229,9 @@ class InspectFilter:
     stack: tuple[str, ...] = ()
     capability_id: str | None = None
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "category", canonical_category_path(self.category))
+
 
 @dataclass(frozen=True)
 class DiscoveryContext:
@@ -251,6 +270,15 @@ class ReuseDecision:
     action: str
     selected_capability_id: str | None
     rationale: tuple[str, ...]
+    human_confirmation_required: bool = field(init=False)
+    abstraction_review_required: bool = field(init=False)
+    execution_authorized: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        # Search can recommend; it cannot assess semantic abstraction or grant consent.
+        needs_review = self.action in {"reuse", "adapt", "abstract"}
+        object.__setattr__(self, "human_confirmation_required", needs_review)
+        object.__setattr__(self, "abstraction_review_required", needs_review)
 
 
 @dataclass(frozen=True)

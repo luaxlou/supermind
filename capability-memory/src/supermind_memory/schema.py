@@ -39,6 +39,7 @@ CAPABILITIES_SCHEMA = pa.schema(
         pa.field("created_at", pa.string(), nullable=False),
         pa.field("updated_at", pa.string(), nullable=False),
         pa.field("last_verified_at", pa.string(), nullable=True),
+        pa.field("abstraction_status", pa.string(), nullable=False),
         pa.field("vector", pa.list_(pa.float32(), EMBEDDING_DIMENSION), nullable=False),
         pa.field("search_text", pa.string(), nullable=False),
     ]

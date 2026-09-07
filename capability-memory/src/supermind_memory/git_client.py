@@ -119,7 +119,7 @@ class GitClient:
     def fetch_branch(self, checkout: Path, remote: str, branch: str) -> bool:
         result = self._runner.run((
             "git", "fetch", "--prune", remote,
-            f"refs/heads/{branch}:refs/remotes/{remote}/{branch}",
+            f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}",
         ), cwd=checkout)
         if result.returncode == 0:
             return True

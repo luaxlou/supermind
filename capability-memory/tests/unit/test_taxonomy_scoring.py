@@ -12,10 +12,11 @@ from supermind_memory.types import ArtifactType, Capability, Evidence, Lifecycle
 
 def candidate() -> Capability:
     return Capability(
+        abstraction_status="abstracted",
         id="capability-1",
         name="Login",
         summary="OAuth login",
-        category_path=("Code and components", "Identity and access"),
+        category_path=("code", "Identity and access"),
         facets=(),
         contract="OAuth callback",
         constraints=(),
@@ -168,10 +169,10 @@ def test_category_path_requires_a_primary_category():
 
 def test_top_level_categories_are_the_six_stable_roots():
     assert TOP_LEVEL_CATEGORIES == (
-        "Code and components",
-        "Product and business",
-        "Design and experience",
-        "Engineering and methods",
-        "Tools and integrations",
-        "Data and intelligence",
+        "code",
+        "product",
+        "design",
+        "engineering",
+        "tools",
+        "data",
     )

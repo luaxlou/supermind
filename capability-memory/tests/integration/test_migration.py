@@ -29,11 +29,12 @@ from supermind_memory.types import (
 def _capability(capability_id: str) -> Capability:
     return Capability(
         capability_id, "OAuth login", "Reusable login flow",
-        ("Code and components", "Identity and access"), ("authentication",),
+        ("code", "Identity and access"), ("authentication",),
         "OAuth callback", (), ArtifactType.CODE, "/project/login.py", "abc123", "hash-a",
         "team", "MIT", ("Python",), ("CPython",), ("macOS",), ("authlib",),
         ("OAuth 2.0",), Lifecycle.CANDIDATE, 1.0, 2.0, "generation-1",
         "2026-09-04T00:00:00Z", "2026-09-04T00:00:00Z", None,
+        abstraction_status="abstracted",
     )
 
 

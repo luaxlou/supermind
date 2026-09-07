@@ -57,8 +57,9 @@ class LocalEventTransactions:
 
 def _capability(source: Path) -> Capability:
     return Capability(
+        abstraction_status="abstracted",
         id="auth.login", name="Login", summary="Reusable login",
-        category_path=("Code and components", "Identity"), facets=("login",),
+        category_path=("code", "Identity"), facets=("login",),
         contract="login -> session", constraints=(), artifact_type=ArtifactType.CODE,
         source_uri=source.as_uri(), source_revision="abc", content_hash="a" * 64,
         owner="test", license="MIT", stack=("python",), runtime=("python",),
@@ -85,6 +86,26 @@ def event_memory(tmp_path, embeddings):
     )
     yield memory, transactions
     memory.close()
+
+
+def test_quality_gate_blocks_incomplete_admission_without_events(event_memory, tmp_path):
+    from supermind_memory.types import ValueInputs
+    memory, transactions = event_memory
+    item = replace(_capability(tmp_path / "login.py"), summary=" ")
+    before = transactions.store.load_all()
+    assessment = memory.evaluate(item, ValueInputs(3, 10, 1, 1, 1, 1, 1))
+    assert assessment.accepted is False
+    assert "summary_missing" in assessment.reasons
+    with pytest.raises(ValueError, match="summary_missing"):
+        memory.register(item, ())
+    assert transactions.store.load_all() == before
+
+
+def test_library_audit_is_read_only(event_memory):
+    memory, transactions = event_memory
+    before = transactions.store.load_all()
+    assert memory.audit()["capabilities"] == []
+    assert transactions.store.load_all() == before
 
 
 def test_register_uses_events_without_calling_direct_repository_writers(event_memory, tmp_path, monkeypatch):

@@ -14,6 +14,7 @@ import yaml
 from yaml.tokens import AnchorToken, ScalarToken, TagToken, ValueToken
 
 from supermind_memory.types import (
+    AbstractionStatus,
     Capability,
     Event,
     Evidence,
@@ -241,6 +242,8 @@ def sanitize_json(value: object) -> Any:
 
 
 def _sanitize_json(value: object, *, active: set[int]) -> Any:
+    if isinstance(value, AbstractionStatus):
+        return value.value
     if value is None or type(value) in {bool, int, float}:
         return value
     if type(value) is str:

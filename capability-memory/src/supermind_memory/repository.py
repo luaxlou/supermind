@@ -1677,6 +1677,7 @@ class CapabilityRepository:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             last_verified_at=row["last_verified_at"],
+            abstraction_status=row.get("abstraction_status", "pending"),
         )
 
     @staticmethod

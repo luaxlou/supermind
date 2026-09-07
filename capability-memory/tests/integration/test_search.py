@@ -140,7 +140,7 @@ def capability(
     summary: str,
     *,
     contract: str,
-    category_path: tuple[str, ...] = ("Code and components", "Identity and access"),
+    category_path: tuple[str, ...] = ("code", "Identity and access"),
     stack: tuple[str, ...] = ("TypeScript",),
     compatibility: tuple[str, ...] = (),
     constraints: tuple[str, ...] = (),
@@ -152,6 +152,7 @@ def capability(
     dependencies: tuple[str, ...] = (),
 ) -> Capability:
     return Capability(
+        abstraction_status="abstracted",
         id=capability_id,
         name=name,
         summary=summary,
@@ -671,18 +672,18 @@ def test_required_stack_rejects_candidate_with_no_declared_stack_or_compatibilit
 @pytest.mark.parametrize(
     ("capability_stack", "capability_compatibility", "capability_category", "wanted_stack", "wanted_category"),
     [
-        (("Μ",), (), ("Code and components", "Identity and access"), ("μ",), ()),
+        (("Μ",), (), ("code", "Identity and access"), ("μ",), ()),
         (
             ("Python",),
             ("Straße",),
-            ("Code and components", "Identity and access"),
+            ("code", "Identity and access"),
             ("STRASSE",),
             (),
         ),
         (
             (),
             (),
-            ("Code and components", "Straße", "Identity and access"),
+            ("code", "Straße", "Identity and access"),
             (),
             ("CODE AND COMPONENTS", "STRASSE"),
         ),
@@ -771,7 +772,7 @@ def test_exact_metadata_prefilter_prevents_incompatible_candidates_from_crowding
     repo.initialize()
     for index in range(25):
         wrong_category = (
-            "Code and components",
+            "code",
             "Legacy",
             "Identity and access",
         )
@@ -788,7 +789,7 @@ def test_exact_metadata_prefilter_prevents_incompatible_candidates_from_crowding
             category_path=(
                 wrong_category
                 if incompatibility == "category"
-                else ("Code and components", "Identity and access")
+                else ("code", "Identity and access")
             ),
             stack=wrong_stack,
             compatibility=("NotTypeScript",) if incompatibility == "compatibility" else (),
@@ -809,7 +810,7 @@ def test_exact_metadata_prefilter_prevents_incompatible_candidates_from_crowding
     result = CapabilitySearch(repo, embeddings).search(
         requirement(
             "OAuth login",
-            category_hint=("Code and components", "Identity and access"),
+            category_hint=("code", "Identity and access"),
             stack=("TypeScript",),
         ),
         limit=1,
@@ -994,7 +995,17 @@ def test_affirmative_current_source_evidence_makes_remote_capability_eligible(em
 
     assert result.status is SearchStatus.COMPLETE
     assert result.matches[0].source_available is True
-    assert ReuseDecisionEngine().decide(requirement("OAuth login", contract=item.contract), result).action == "reuse"
+    decision = ReuseDecisionEngine().decide(requirement("OAuth login", contract=item.contract), result)
+    assert decision.action == "reuse"
+    assert decision.human_confirmation_required is True
+    assert decision.abstraction_review_required is True
+    assert decision.execution_authorized is False
+    pending = replace(result, capability_snapshots=tuple(replace(item, abstraction_status="pending")
+                      for item in result.capability_snapshots))
+    assert ReuseDecisionEngine().decide(requirement("OAuth login", contract=item.contract), pending).action == "abstract"
+    declined = replace(result, capability_snapshots=tuple(replace(item, abstraction_status="not_extracting")
+                       for item in result.capability_snapshots))
+    assert ReuseDecisionEngine().decide(requirement("OAuth login", contract=item.contract), declined).action == "build"
 
 
 @pytest.mark.parametrize("as_uri", [False, True])
@@ -1150,7 +1161,8 @@ def swapping_open(path, flags, mode=0o777, *, dir_fd=None):
 
 source_resolution.os.open = swapping_open
 item = Capability(
-    id="swapped-source", name="Swapped source", summary="", category_path=("Code and components",), facets=(), contract="", constraints=(),
+        abstraction_status="abstracted",
+        id="swapped-source", name="Swapped source", summary="", category_path=("code",), facets=(), contract="", constraints=(),
     artifact_type=ArtifactType.CODE, source_uri=source, source_revision="", content_hash="", owner="", license="", stack=(), runtime=(),
     platform=(), dependencies=(), compatibility=(), lifecycle=Lifecycle.VERIFIED, confidence=1.0, expected_net_value=1.0,
     embedding_generation="", created_at="", updated_at="", last_verified_at="2026-09-06T00:00:00Z",

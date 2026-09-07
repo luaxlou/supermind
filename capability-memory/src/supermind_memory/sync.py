@@ -111,6 +111,12 @@ class SyncCoordinator:
     def mutate(self, create_event: Callable[[ReplayResult], AuthorityEvent]) -> SyncReport:
         return self.mutate_batch(lambda current: (create_event(current),))
 
+    def purge(self, identifiers: tuple[str, ...], *, confirm: bool = False,
+              expected_digest: str | None = None, expected_head: str | None = None) -> dict:
+        from supermind_memory.purge import execute_purge
+        return execute_purge(self, identifiers, confirm=confirm,
+                             expected_digest=expected_digest, expected_head=expected_head)
+
     def mutate_batch(
         self,
         create_events: Callable[[ReplayResult], Sequence[AuthorityEvent]],
@@ -250,6 +256,8 @@ class SyncCoordinator:
             raise SyncBlocked("repository_paths_invalid", (str(error),)) from error
 
     def _validate_local_checkout(self) -> ReplayResult:
+        if (self.paths.root / "purge-pending.json").exists():
+            raise SyncBlocked("purge_recovery_required")
         if self.paths.config.is_symlink():
             raise SyncBlocked("repository_config_unsafe")
         try:
@@ -366,6 +374,9 @@ class SyncCoordinator:
             or marker.default_branch != self.config.branch
         ):
             raise SyncBlocked("repository_marker_mismatch")
+        local_marker = MemoryMarker.from_bytes((self.paths.checkout / "memory.json").read_bytes())
+        if marker.history_epoch != local_marker.history_epoch:
+            raise SyncBlocked("history_epoch_mismatch", ("Reinitialize this stale device from the current repository",))
         local = self.git.tree_entries(self.paths.checkout, "HEAD", "events")
         remote = self.git.tree_entries(self.paths.checkout, remote_ref, "events")
         invalid_paths = sorted(

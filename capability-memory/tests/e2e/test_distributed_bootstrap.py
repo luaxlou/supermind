@@ -122,7 +122,10 @@ def test_bootstrap_clone_rebuild_and_readme_are_equivalent(tmp_path, embeddings)
     assert searches[1]["matches"][0]["vector_score"] > 0
     readme = (second.checkout / "README.md").read_text()
     assert "手机号登录" in readme
-    assert readme.count("<details>") == readme.count("</details>") >= 7
+    assert "<details>" not in readme
+    assert "### 代码（code）" in readme
+    for width, label in ((20, "名称"), (25, "英文标识"), (10, "状态"), (45, "说明")):
+        assert f'<th width="{width}%">{label}</th>' in readme
     assert readme == (first.checkout / "README.md").read_text()
     manifests = [json.loads((paths.checkout / ".supermind/render-manifest.json").read_text()) for paths in (first, second)]
     assert manifests[0] == manifests[1]

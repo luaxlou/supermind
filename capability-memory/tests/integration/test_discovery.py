@@ -88,7 +88,7 @@ def test_discovery_sanitizes_before_summary_truncation_and_category_derivation(t
         }), encoding="utf-8")
         observed.append(discovery.scan_active_project(project)[0])
     assert observed[0].summary == observed[1].summary == 'helper {"password":"[REDACTED]"}'
-    assert observed[0].category_path == observed[1].category_path == ("Code and components",)
+    assert observed[0].category_path == observed[1].category_path == ("code",)
     assert observed[0].content_hash == observed[1].content_hash
 
 
@@ -254,8 +254,8 @@ def test_discovery_uses_manifest_first_plugin_and_skill_categories(tmp_path, dis
 
     assert set(by_name) == {"example-plugin", "debug-helper"}
     assert by_name["example-plugin"].artifact_type is ArtifactType.PLUGIN
-    assert by_name["example-plugin"].category_path == ("Tools and integrations", "Plugins and MCP")
-    assert by_name["debug-helper"].category_path == ("Tools and integrations", "Codex Skills")
+    assert by_name["example-plugin"].category_path == ("tools", "Plugins and MCP")
+    assert by_name["debug-helper"].category_path == ("tools", "Codex Skills")
 
 
 def test_root_skill_reader_does_not_recursively_authorize_nested_skills(tmp_path, discovery):
@@ -344,7 +344,7 @@ def test_authoring_is_not_misclassified_as_identity_access(tmp_path, discovery):
 
     result = discovery.scan_active_project(project)
 
-    assert result[0].category_path == ("Code and components",)
+    assert result[0].category_path == ("code",)
 
 
 def test_authentication_token_is_classified_as_identity_access(tmp_path, discovery):
@@ -352,7 +352,7 @@ def test_authentication_token_is_classified_as_identity_access(tmp_path, discove
     project = make_project(tmp_path / "active", readme="Authentication callback handler", package_name="login-kit")
 
     assert discovery.scan_active_project(project)[0].category_path == (
-        "Code and components",
+        "code",
         "Identity and access",
     )
 

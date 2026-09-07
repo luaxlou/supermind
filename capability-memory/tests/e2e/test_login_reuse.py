@@ -51,6 +51,10 @@ def projects(tmp_path: Path) -> Projects:
         json.dumps({"name": "directory-provider", "protocol": "SAML"}),
         encoding="utf-8",
     )
+    (roots[0] / "login.py").write_text(
+        "def login(callback): return {'session': callback['subject']}\n",
+        encoding="utf-8",
+    )
     return Projects(*roots)
 
 
@@ -173,7 +177,7 @@ def test_login_capability_is_discovered_reused_visualized_and_invalidated(
         _oauth_requirement(projects.c, language="zh"),
     )
     decision = explorer.decision(decision_c.requirement, decision_c.search_result)
-    assert "Code and components / Identity and access" in decision
+    assert "code / Identity and access" in decision
     assert "Expected net value" in decision
 
     Path(login.source_uri.removeprefix("file://")).unlink()
@@ -236,7 +240,7 @@ def test_hardened_login_reuse_preserves_proof_repair_secrets_and_demand_history(
         intent='OAuth login {"password":"correct-horse-battery-staple"} '
         "https://example.test/callback?access_token=oauth-secret-1234567890",
         contract="requires Python >=3.12,<4 with AES 256 encryption",
-        category_hint=("Code and components", "Identity and access"),
+        category_hint=("code", "Identity and access"),
         runtime=("CPython",), stack=("Python",), license=("MIT",),
     )
     unmet = workflow.begin_design(projects.b, wanted)
@@ -342,7 +346,7 @@ def test_hardened_login_reuse_preserves_proof_repair_secrets_and_demand_history(
         reopened.initialize()
         assert {name: reopened._rows(name) for name in history_before} == history_before
 
-    source = projects.a / "package.json"
+    source = projects.a / "login.py"
     decisions = []
     for reference in (str(source), source.as_uri()):
         stored = memory.get(complete.id)
@@ -364,12 +368,13 @@ def test_hardened_login_reuse_preserves_proof_repair_secrets_and_demand_history(
 
 
 def _login_capability(project: Path) -> Capability:
-    source = project / "package.json"
+    source = project / "login.py"
     return Capability(
+        abstraction_status="abstracted",
         id="auth.login",
         name="OAuth login",
         summary="Reusable OAuth login with a verified session contract",
-        category_path=("Code and components", "Identity and access"),
+        category_path=("code", "Identity and access"),
         facets=("authentication", "login"),
         contract="OAuth callback creates a session",
         constraints=(),
@@ -397,10 +402,11 @@ def _login_capability(project: Path) -> Capability:
 def _incompatible_identity_capability(project: Path) -> Capability:
     source = project / "saml-provider.json"
     return Capability(
+        abstraction_status="abstracted",
         id="auth.saml-directory",
         name="Federated authentication sign-in provider",
         summary="Third-party identity login with strong operational evidence",
-        category_path=("Code and components", "Identity and access"),
+        category_path=("code", "Identity and access"),
         facets=("oauth", "callback", "session", "login", "access"),
         contract="SAML assertion provisions directory identity",
         constraints=(),
@@ -476,7 +482,7 @@ def _oauth_requirement(project: Path, language: str = "en") -> RequirementProfil
         project_id=project.name,
         intent=intent,
         contract="OAuth callback creates a session",
-        category_hint=("Code and components", "Identity and access"),
+        category_hint=("code", "Identity and access"),
         stack=("Python",),
     )
 
@@ -487,7 +493,7 @@ def _partial_oauth_requirement(project: Path) -> RequirementProfile:
         project_id=project.name,
         intent="设计支持第三方登录的身份认证",
         contract="OAuth callback creates a session and refreshes access tokens",
-        category_hint=("Code and components", "Identity and access"),
+        category_hint=("code", "Identity and access"),
         stack=("Python",),
     )
 

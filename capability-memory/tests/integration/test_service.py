@@ -693,6 +693,161 @@ def test_initialize_uses_the_current_health_gate_before_bootstrap(
         memory.initialize(project)
 
 
+def test_discovery_respects_persistent_category_exclusion(memory, tmp_path):
+    project = tmp_path / "excluded-skill"
+    project.mkdir()
+    (project / "SKILL.md").write_text("---\nname: excluded-example\ndescription: Example skill\n---\nInstructions\n")
+    memory.initialize(project)
+    assert any(item.category_path[:2] == ("tools", "Codex Skills")
+               for item in memory.repository.list_capabilities())
+    memory._commit_event("metadata", "discovery-excluded-category-prefixes-v1", "set",
+                         {"value": [["Tools and integrations", "Codex Skills"]]})
+    result = memory.refresh_sources(project)
+    assert not any(item.category_path[:2] == ("tools", "Codex Skills")
+                   for item in result.capabilities)
+
+
+def test_category_removal_previews_then_tombstones_and_excludes(memory, tmp_path):
+    project = tmp_path / "cleanup-skill"
+    project.mkdir()
+    (project / "SKILL.md").write_text("---\nname: cleanup-example\ndescription: Example skill\n---\nInstructions\n")
+    memory.initialize(project)
+    category = ("Tools and integrations", "Codex Skills")
+    preview = memory.remove_category(category)
+    assert preview["count"] == 1
+    assert preview["applied"] is False
+    identifier = preview["capabilities"][0]["id"]
+    assert memory.get(identifier) is not None
+    result = memory.remove_category(category, confirm=True,
+                                    expected_digest=preview["event_set_digest"], exclude_future=True)
+    assert result["applied"] is True
+    assert memory.get(identifier) is None
+    assert not memory.refresh_sources(project).capabilities
+    assert memory.get(identifier) is None
+    assert any(e.operation == "tombstoned" and e.entity_id == identifier
+               for e in memory.sync_coordinator.store.load_all())
+
+
+def test_category_removal_requires_current_preview(memory, tmp_path):
+    memory.initialize(tmp_path)
+    with pytest.raises(CapabilityMemoryBlocked, match="preview"):
+        memory.remove_category(("Tools and integrations",), confirm=True)
+    with pytest.raises(CapabilityMemoryBlocked, match="preview"):
+        memory.remove_category(("Tools and integrations",), confirm=True, expected_digest="stale")
+
+
+def test_describe_changes_only_presentation_fields(memory, tmp_path):
+    project = tmp_path / "described-skill"
+    project.mkdir()
+    (project / "SKILL.md").write_text("---\nname: sample\ndescription: Example skill\n---\nInstructions\n")
+    memory.initialize(project)
+    before = memory.repository.list_capabilities()[0]
+    memory.describe_capabilities(({"id": before.id, "name": "示例能力", "summary": "用于演示的能力。"},))
+    after = memory.get(before.id)
+    assert after.name == "示例能力"
+    assert after.summary == "用于演示的能力。"
+    assert replace(after, name=before.name, summary=before.summary, updated_at=before.updated_at) == before
+    with pytest.raises(ValueError):
+        memory.describe_capabilities(({"id": before.id, "name": "", "summary": "说明"},))
+    from supermind_memory.cli import main
+    import io
+    from contextlib import redirect_stdout
+    document = tmp_path / "description.json"
+    document.write_text(json.dumps({"capabilities": [{"id": before.id, "name": "中文名称", "summary": "中文说明"}]}))
+    output = io.StringIO()
+    with redirect_stdout(output):
+        assert main(["describe", "--input", str(document), "--format", "json"],
+                    service_factory=lambda: memory) == 0
+    result = json.loads(output.getvalue())["result"]
+    assert result[0]["name"] == "中文名称"
+    assert result[0]["contract"] == before.contract
+
+
+def test_reorganize_persists_canonical_categories_and_pending_status(memory, tmp_path):
+    project = tmp_path / "reorganize-skill"
+    project.mkdir()
+    (project / "SKILL.md").write_text("---\nname: sample\ndescription: Example skill\n---\nInstructions\n")
+    memory.initialize(project)
+    before = memory.repository.list_capabilities()[0]
+    payload = asdict(before)
+    payload.pop("abstraction_status")
+    payload["category_path"] = ["Tools and integrations", "Codex Skills"]
+    memory._commit_event("capability", before.id, "updated", payload)
+    memory._commit_event("metadata", "discovery-excluded-category-prefixes-v1", "set",
+                         {"value": [["Tools and integrations", "Plugins and MCP"]]})
+    report = memory.reorganize()
+    assert report["capabilities_updated"] == 1
+    assert memory.get(before.id).abstraction_status.value == "pending"
+    assert memory.get(before.id).category_path[0] == "tools"
+    assert memory.repository.get_metadata("discovery-excluded-category-prefixes-v1") == [["tools", "Plugins and MCP"]]
+    assert memory.reorganize()["capabilities_updated"] == 0
+    memory.set_abstraction(before.id, "in_progress", "正在梳理通用边界")
+    assert memory.get(before.id).abstraction_status.value == "in_progress"
+    with pytest.raises(ValueError, match="source"):
+        memory.set_abstraction(before.id, "abstracted", "已完成")
+    memory.set_abstraction(before.id, "not_extracting", "成本高于收益")
+    assert memory.get(before.id).abstraction_status.value == "not_extracting"
+
+
+def test_completed_abstraction_requires_separate_source_and_successful_evidence(memory, tmp_path):
+    target = _registered_login(memory, tmp_path)
+    source = replace(target, id="source.business-login", abstraction_status="pending")
+    memory._commit_event("capability", source.id, "registered", asdict(source))
+    memory.set_abstraction(target.id, "pending", "重新评估通用边界")
+    with pytest.raises(ValueError, match="evidence"):
+        memory.set_abstraction(target.id, "abstracted", "已抽离业务配置", (source.id,), ("missing",))
+    assert memory.get(target.id).abstraction_status.value == "pending"
+    ready = memory.set_abstraction(target.id, "abstracted", "通用接口和配置边界已验证",
+                                   (source.id,), ("verification-project-a",))
+    assert ready.abstraction_status.value == "abstracted"
+    assert memory.get(source.id).abstraction_status.value == "pending"
+    assessment = memory.repository.get_metadata("abstraction-assessment-" + target.id)
+    assert assessment["source_ids"] == [source.id]
+
+
+@pytest.mark.parametrize("confirm", [False, True])
+def test_remove_cli_uses_real_management_service(memory, tmp_path, capsys, confirm):
+    from supermind_memory.cli import main
+    project = tmp_path / "cli-skill"
+    project.mkdir()
+    (project / "SKILL.md").write_text("---\nname: cli-example\ndescription: Example skill\n---\nInstructions\n")
+    memory.initialize(project)
+    preview = memory.remove_category(("Tools and integrations", "Codex Skills"))
+    args = ["remove", "--category", "Tools and integrations", "--category", "Codex Skills",
+            "--exclude-future", "--format", "json"]
+    if confirm:
+        args += ["--confirm", "--expected-digest", preview["event_set_digest"]]
+    capsys.readouterr()
+    assert main(args, service_factory=lambda: memory) == 0
+    result = json.loads(capsys.readouterr().out)["result"]
+    assert result["count"] == 1
+    assert result["applied"] is confirm
+    assert result["exclude_future"] is True
+
+
+def test_malformed_exclusion_policy_blocks_discovery(memory, tmp_path):
+    memory.initialize(tmp_path)
+    memory._commit_event("metadata", "discovery-excluded-category-prefixes-v1", "set", {"value": [[]]})
+    with pytest.raises(CapabilityMemoryBlocked, match="category"):
+        memory.refresh_sources(tmp_path)
+
+
+def test_category_removal_preserves_referenced_capabilities(memory, tmp_path):
+    project = tmp_path / "linked-skill"
+    project.mkdir()
+    (project / "SKILL.md").write_text("---\nname: linked-example\ndescription: Example skill\n---\nInstructions\n")
+    memory.initialize(project)
+    category = ("Tools and integrations", "Codex Skills")
+    preview = memory.remove_category(category)
+    identifier = preview["capabilities"][0]["id"]
+    memory._commit_event("metadata", "test-link", "set", {"value": {"capability_id": identifier}})
+    preview = memory.remove_category(category)
+    assert preview["references"]
+    with pytest.raises(CapabilityMemoryBlocked, match="references"):
+        memory.remove_category(category, confirm=True, expected_digest=preview["event_set_digest"])
+    assert memory.get(identifier) is not None
+
+
 def test_discover_persists_scanned_capabilities_with_stable_source_identity(
     memory: CapabilityMemory,
     tmp_path: Path,
@@ -927,6 +1082,17 @@ def test_reregister_cannot_revive_an_authoritatively_retired_capability(
     assert reregistered.lifecycle is Lifecycle.RETIRED
 
 
+def _seed_legacy_manifest(memory, discovered):
+    """Model a pre-quality-gate record; new manifests may no longer be admitted."""
+    rejected = memory.evaluate(discovered, _positive_value_inputs())
+    assert rejected.accepted is False
+    assert "code_asset_is_manifest" in rejected.reasons
+    return memory._register_event_first(
+        replace(discovered, expected_net_value=10),
+        [_verification(discovered.id, "project-a")],
+    )
+
+
 def test_refresh_preserves_evaluation_when_the_discovered_source_is_unchanged(
     memory: CapabilityMemory,
     tmp_path: Path,
@@ -939,12 +1105,7 @@ def test_refresh_preserves_evaluation_when_the_discovered_source_is_unchanged(
     )
     memory.initialize(project)
     discovered = memory.refresh_sources(project).capabilities[0]
-    evaluated = memory.evaluate(discovered, _positive_value_inputs()).capability
-    assert evaluated is not None
-    verified = memory.register(
-        evaluated,
-        [_verification(evaluated.id, "project-a")],
-    )
+    verified = _seed_legacy_manifest(memory, discovered)
     memory._ensure_healthy()
     row_before = next(
         row
@@ -983,12 +1144,7 @@ def test_refresh_degrades_a_capability_when_its_discovered_source_is_removed(
     )
     memory.initialize(project)
     discovered = memory.repository.list_capabilities()[0]
-    evaluated = memory.evaluate(discovered, _positive_value_inputs()).capability
-    assert evaluated is not None
-    verified = memory.register(
-        evaluated,
-        [_verification(evaluated.id, "project-a")],
-    )
+    verified = _seed_legacy_manifest(memory, discovered)
     recommended = memory.record_use(
         ReuseResult(
             capability_id=verified.id,
@@ -1032,12 +1188,7 @@ def test_refresh_degrades_a_capability_when_discovered_content_changes(
     )
     memory.initialize(project)
     discovered = memory.repository.list_capabilities()[0]
-    evaluated = memory.evaluate(discovered, _positive_value_inputs()).capability
-    assert evaluated is not None
-    verified = memory.register(
-        evaluated,
-        [_verification(evaluated.id, "project-a")],
-    )
+    verified = _seed_legacy_manifest(memory, discovered)
     manifest.write_text(
         json.dumps({"name": "auth-kit", "description": "Changed contract"}),
         encoding="utf-8",
@@ -1207,7 +1358,10 @@ def test_record_use_treats_an_empty_source_uri_as_unavailable(
     memory.initialize(project)
     evaluated = memory.evaluate(_login_capability(source), _positive_value_inputs()).capability
     assert evaluated is not None
-    registered = memory.register(
+    with pytest.raises(ValueError, match="source_uri_missing"):
+        memory.register(replace(evaluated, source_uri=""), ())
+    # Replay compatibility: older versions could admit this invalid record.
+    registered = memory._register_event_first(
         replace(evaluated, source_uri=""),
         [_verification(evaluated.id, "project-a")],
     )
@@ -1611,6 +1765,7 @@ class _UnhealthyAfterRebuildHealthManager:
 
 def _login_capability(source: Path) -> Capability:
     return Capability(
+        abstraction_status="abstracted",
         id="auth.login",
         name="OAuth login",
         summary="Reusable OAuth login",

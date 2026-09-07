@@ -359,7 +359,25 @@ def _parser() -> _ArgumentParser:
     discover.add_argument("--codex-home")
     _add_format(discover)
 
-    for command in ("search", "evaluate", "register", "record-use", "record-outcome"):
+    audit = commands.add_parser("audit", help="Read-only capability quality and source audit")
+    audit.add_argument("--capability-id")
+    _add_format(audit)
+    purge = commands.add_parser("purge", help="Permanently clear exact capabilities, dependants and Git history")
+    purge.add_argument("--capability-id", action="append", required=True)
+    purge.add_argument("--confirm", action="store_true")
+    purge.add_argument("--expected-digest")
+    purge.add_argument("--expected-head")
+    _add_format(purge)
+    remove = commands.add_parser("remove", help="Preview or confirm removal of a category subtree")
+    remove.add_argument("--category", action="append", required=True,
+                        help="One category-path component; repeat from root to subgroup")
+    remove.add_argument("--confirm", action="store_true")
+    remove.add_argument("--expected-digest", help="Exact event_set_digest returned by the preview")
+    remove.add_argument("--exclude-future", action="store_true",
+                        help="Persist a category exclusion for automatic discovery")
+    _add_format(remove)
+
+    for command in ("search", "evaluate", "register", "record-use", "record-outcome", "describe", "set-abstraction"):
         operation = commands.add_parser(command)
         operation.add_argument("--input", required=True)
         _add_format(operation, markdown=command == "search")
@@ -398,7 +416,7 @@ def _parser() -> _ArgumentParser:
     _add_format(rebuild)
     health = commands.add_parser("health")
     _add_format(health)
-    for command in ("status", "sync", "render", "open"):
+    for command in ("status", "sync", "render", "open", "reorganize"):
         operation = commands.add_parser(command)
         _add_format(operation)
     migrate = commands.add_parser("migrate")
@@ -422,6 +440,8 @@ def _dispatch(
     data_home: Path | None,
 ) -> tuple[object, str | None]:
     command = arguments.command
+    if command == "audit":
+        return memory.audit(arguments.capability_id), None
     if command == "init":
         health = (memory.initialize(Path(arguments.project_root))
                   if arguments.project_root else memory.health_check())
@@ -456,12 +476,29 @@ def _dispatch(
         if arguments.format == "markdown":
             return result, CapabilityExplorer(memory.repository).decision(requirement, result)
         return result, None
+    if command == "purge":
+        return memory.sync_coordinator.purge(tuple(arguments.capability_id), confirm=arguments.confirm,
+            expected_digest=arguments.expected_digest, expected_head=arguments.expected_head), None
+    if command == "remove":
+        return memory.remove_category(tuple(arguments.category), confirm=arguments.confirm,
+                                      expected_digest=arguments.expected_digest,
+                                      exclude_future=arguments.exclude_future), None
     if command == "evaluate":
         payload = _read_object(arguments.input)
         return memory.evaluate(
             _capability(_object_field(payload, "capability", "candidate")),
             _value_inputs(_object_field(payload, "inputs", "value_inputs")),
         ), None
+    if command == "describe":
+        return memory.describe_capabilities(_list_field(_read_object(arguments.input), "capabilities")), None
+    if command == "reorganize":
+        return memory.reorganize(), None
+    if command == "set-abstraction":
+        payload = _read_object(arguments.input)
+        if set(payload) - {"capability_id", "status", "rationale", "source_ids", "evidence_ids"}:
+            raise InvalidInput("unexpected abstraction assessment fields")
+        return memory.set_abstraction(_string(payload, "capability_id"), _string(payload, "status"),
+            _string(payload, "rationale"), _strings(payload, "source_ids"), _strings(payload, "evidence_ids")), None
     if command == "register":
         payload = _read_object(arguments.input)
         evidence = _list_field(payload, "evidence")

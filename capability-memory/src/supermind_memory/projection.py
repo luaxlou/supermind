@@ -69,6 +69,8 @@ class ProjectionBlocked(CapabilityMemoryBlocked):
 def _record(payload: dict[str, Any], record_type: type, table: str) -> Any:
     """Adapt domain JSON to the existing strict row/dataclass parser."""
     expected = {field.name for field in fields(record_type)}
+    if record_type is Capability and "abstraction_status" not in payload:
+        payload = {**payload, "abstraction_status": "pending"}
     if set(payload) != expected:
         raise ValueError(f"{table} payload fields do not match {record_type.__name__}")
     row = dict(payload)

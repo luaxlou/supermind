@@ -103,18 +103,18 @@ class CapabilityExplorer:
         lines = [
             "# Capability catalog",
             "",
-            "| ID | Name | Category | Lifecycle | Reuse score | Expected net value |",
-            "| --- | --- | --- | --- | ---: | ---: |",
+            "| ID | Name | Category | Abstraction status | Lifecycle | Reuse score | Expected net value |",
+            "| --- | --- | --- | --- | --- | ---: | ---: |",
         ]
         for item, score in capabilities:
             lines.append(
                 "| "
                 f"{_markdown_cell(item.id)} | {_markdown_cell(item.name)} | "
-                f"{_markdown_cell(' / '.join(item.category_path))} | {_markdown_cell(item.lifecycle.value)} | "
+                f"{_markdown_cell(' / '.join(item.category_path))} | {_markdown_cell(item.abstraction_status.value)} | {_markdown_cell(item.lifecycle.value)} | "
                 f"{_number(score)} | {_number(item.expected_net_value)} |"
             )
         if not capabilities:
-            lines.append("| — | No capabilities match this filter | — | — | — | — |")
+            lines.append("| — | No capabilities match this filter | — | — | — | — | — |")
         return "\n".join(lines) + "\n"
 
     def detail(self, capability_id: str) -> str:
@@ -132,6 +132,7 @@ class CapabilityExplorer:
             _row("Name", capability.name),
             _row("Category", " / ".join(capability.category_path)),
             _row("Maturity", capability.lifecycle.value),
+            _row("Abstraction status", capability.abstraction_status.value),
             _row("Reuse score", _number(score)),
             _row("Contract", capability.contract),
             _row("Constraints", _joined(capability.constraints)),
@@ -266,8 +267,11 @@ class CapabilityExplorer:
         )
         lines.extend(("", "## Selected action", ""))
         if decision.selected_capability_id is not None:
-            verb = "Adapt" if decision.action == "adapt" else "Reuse"
+            verb = {"adapt": "Adapt", "abstract": "Abstract source before reuse"}.get(decision.action, "Reuse")
             lines.append(f"{verb} capability: {_markdown_text(decision.selected_capability_id)}")
+            lines.extend(("", "Recommendation only — execution is not authorized.",
+                          "Assess business-independent abstraction and net benefit, then obtain explicit "
+                          "human confirmation for this specific reuse or adaptation before acting."))
         else:
             lines.append("Build a new capability; no suitable reusable candidate.")
         lines.extend(("", "## Rejections", ""))

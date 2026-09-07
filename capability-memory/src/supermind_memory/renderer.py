@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from html import escape as escape_html
 import json
 import os
 import re
@@ -18,25 +19,35 @@ from supermind_memory.explorer import escape_markdown, escape_mermaid_label, sta
 from supermind_memory.projection import AuthoritySnapshot, authority_snapshot
 from supermind_memory.replay import ReplayResult
 from supermind_memory.taxonomy import TOP_LEVEL_CATEGORIES
-from supermind_memory.types import Capability, Evidence, Lifecycle, Relationship
+from supermind_memory.types import AbstractionStatus, Capability, Evidence, Lifecycle, Relationship
 
-RENDERER_VERSION = "1"
+RENDERER_VERSION = "6"
 MANIFEST_PATH = PurePosixPath(".supermind/render-manifest.json")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 CATEGORIES = {
-    "Code and components": ("代码与组件", "code-and-components", "用于直接复用到产品实现中的模块、组件和库。"),
-    "Product and business": ("产品与业务", "product-and-business", "沉淀可重复使用的产品机制、业务规则和领域方案。"),
-    "Design and experience": ("设计与体验", "design-and-experience", "复用经过验证的交互、视觉和用户体验方案。"),
-    "Engineering and methods": ("工程与方法", "engineering-and-methods", "复用工程实践、交付流程和质量保障方法。"),
-    "Tools and integrations": ("工具与集成", "tools-and-integrations", "连接可复用的工具、服务和系统集成。"),
-    "Data and intelligence": ("数据与智能", "data-and-intelligence", "复用数据资产、检索能力和智能化组件。"),
+    "code": ("代码", "code", "收录可独立接入其他项目的模块、组件和库，例如认证、文件上传和消息通知。复用的是通用接口与实现，不是整段原业务。"),
+    "product": ("产品", "product", "收录可跨产品使用的机制和规则，例如审批、订阅和权限模型。需要分离具体客户、业务流程和运营配置。"),
+    "design": ("设计", "design", "收录交互模式、视觉规范和设计模板，例如表单校验与列表详情布局。需能适应不同产品内容和品牌。"),
+    "engineering": ("工程", "engineering", "收录开发、测试、发布和运维方法，例如契约测试与回滚流程。需说明适用条件，避免依赖某个项目的路径或环境。"),
+    "tools": ("工具", "tools", "收录经过评估的自动化工具和系统连接能力，例如数据导入与服务适配。安装过某个插件不等于沉淀了可复用能力。"),
+    "data": ("数据", "data", "收录数据处理、检索和模型应用能力，例如清洗流程与语义检索。需要明确输入输出、数据权限和质量要求。"),
+}
+ABSTRACTION_LABELS = {AbstractionStatus.PENDING: "待抽象", AbstractionStatus.IN_PROGRESS: "抽象中",
+                      AbstractionStatus.ABSTRACTED: "已抽象", AbstractionStatus.NOT_EXTRACTING: "不提取"}
+SUBCATEGORY_LABELS = {
+    "AI orchestration": "智能编排", "Capability memory": "能力管理",
+    "Authentication": "身份认证", "Client adapters": "客户端适配",
+    "Phone OTP and sessions": "短信登录", "Codex Skills": "Codex 技能",
+    "Plugins and MCP": "插件与 MCP",
 }
 LIFECYCLE_LABEL = {
     Lifecycle.OBSERVED: "已发现", Lifecycle.CANDIDATE: "候选",
-    Lifecycle.VERIFIED: "已验证", Lifecycle.RECOMMENDED: "推荐复用",
+    Lifecycle.VERIFIED: "已验证", Lifecycle.RECOMMENDED: "推荐候选",
     Lifecycle.DEGRADED: "需维护", Lifecycle.RETIRED: "已退役",
 }
 _FIXED_RENDER_PATHS = frozenset({
+    *(PurePosixPath(f"catalog/{slug}.md") for slug in ("code-and-components", "product-and-business",
+      "design-and-experience", "engineering-and-methods", "tools-and-integrations", "data-and-intelligence")),
     PurePosixPath("README.md"),
     PurePosixPath("catalog/README.md"),
     *(PurePosixPath(f"catalog/{value[1]}.md") for value in CATEGORIES.values()),
@@ -168,36 +179,63 @@ def _root_readme(
     relationships: tuple[Relationship, ...], demands: tuple[Any, ...], digest: str,
 ) -> bytes:
     open_demands = tuple(x for x in demands if x.status.casefold() not in {"resolved", "linked"})
-    lines = ["# Supermind Capability Memory", "",
-             "按价值与复用依据组织的能力库。事件记录是唯一权威来源；本页由事件自动生成。", "",
-             f"- 权威事件集：`{digest}`",
-             "- 同步状态：当前页面与本提交的权威事件集一致",
-             "- [完整目录](catalog/README.md) · [待解决需求](demands/open.md) · [关系图](relationships.md)", ""]
+    lines = ["# Supermind 能力库", "",
+             "Supermind 是协助你开发和改进软件的 AI 工具。这个仓库是它的能力库："
+             "记录开发过程中值得保留的实现和方法，帮助后续项目减少重复工作。", "",
+             "Supermind 会自动发现和评估候选能力。你可以在下面按用途浏览，点击名称查看说明、来源和验证记录，"
+             "也可以直接让 Supermind 查询、修改或清理条目。内容保存在本地，并同步到这个私有 GitHub 仓库。", "",
+             "**收录不等于可以直接复用。** 具体业务实现仅作为来源；只有能脱离原业务使用、确实节省成本的部分，"
+             "才值得提取。每次复用或适配都必须经人确认。现有条目仍需逐项评估。", "",
+             f"## 能力与来源（{len(capabilities)} 项）", ""]
     for category in TOP_LEVEL_CATEGORIES:
         label, slug, value = CATEGORIES[category]
         members = tuple(x for x in capabilities if x.category_path[0] == category)
-        verified = sum(x.lifecycle is Lifecycle.VERIFIED for x in members)
-        lines += ["<details>", f"<summary>{label} · {len(members)} 项 · {verified} 项已验证</summary>",
-                  "", value, "", f"[查看分类页](catalog/{slug}.md)", ""]
-        for item in members:
-            lines += _capability_fold(item, evidence.get(item.id, ()), "")
-        lines += ["</details>", ""]
+        if not members:
+            continue
+        lines += [f"### {label}（{slug}）", "", value, ""]
+        for heading, states in (("已抽象能力", {AbstractionStatus.ABSTRACTED}),
+                                ("待抽象来源", {AbstractionStatus.PENDING, AbstractionStatus.IN_PROGRESS}),
+                                ("不提取的来源", {AbstractionStatus.NOT_EXTRACTING})):
+            group = tuple(item for item in members if item.abstraction_status in states)
+            if not group and heading != "已抽象能力":
+                continue
+            lines += [f"#### {heading}", ""]
+            lines += _capability_table(group) if group else ["暂无。"]
+            lines.append("")
+    lines.append("")
     lines += ["## 待解决复用需求", "", f"当前有 {len(open_demands)} 项未解决需求。", "",
               "[查看待解决需求](demands/open.md)", "", "## 最近变化", ""]
     recent = sorted(capabilities, key=lambda x: (x.updated_at, x.id), reverse=True)[:5]
-    lines += ([f"- {escape_markdown(x.name)}：{LIFECYCLE_LABEL[x.lifecycle]}（{escape_markdown(x.updated_at)}）" for x in recent]
-              or ["- 暂无变化。"])
-    lines += ["", "## 关系概览", "", "```mermaid", "flowchart LR"]
-    related_ids = {identifier for relation in relationships for identifier in (relation.source_id, relation.target_id)}
-    for item in capabilities:
-        if item.id in related_ids:
-            lines.append(f'{stable_mermaid_node_id(item.id)}["{escape_mermaid_label(_bounded(item.name))}"]')
-    for relation in relationships:
-        lines.append(f"{stable_mermaid_node_id(relation.source_id)} --> {stable_mermaid_node_id(relation.target_id)}")
-    if not relationships:
-        lines.append('empty["暂无已声明关系"]')
-    lines.append("```")
+    if recent:
+        lines += [f"- [{escape_markdown(x.name)}]({_capability_path(x.id)})：{ABSTRACTION_LABELS[x.abstraction_status]}（{escape_markdown(x.updated_at.split('T')[0])}）" for x in recent]
+    else:
+        lines.append("暂无变化。")
     return _document(lines)
+
+
+def _capability_table(capabilities: tuple[Capability, ...], prefix: str = "") -> list[str]:
+    """Group tables by subcategory, preserving bilingual names and explicit states."""
+    lines = []
+    groups: dict[tuple[str, ...], list[Capability]] = {}
+    for item in capabilities:
+        groups.setdefault(item.category_path[1:], []).append(item)
+    for path, members in sorted(groups.items()):
+        categories = []
+        for group in path:
+            label = SUBCATEGORY_LABELS.get(group, group)
+            categories.append(f"{label}（{group}）" if label != group else group)
+        title = " / ".join(categories) or "未分类（uncategorized）"
+        lines += [f"##### {escape_markdown(title)}", "", '<table width="100%">',
+                  '<thead><tr><th width="20%">名称</th><th width="25%">英文标识</th>'
+                  '<th width="10%">状态</th><th width="45%">说明</th></tr></thead>', '<tbody>']
+        for item in members:
+            lines += ['<tr>',
+                      f'<td nowrap><a href="{escape_html(prefix + str(_capability_path(item.id)))}">{escape_html(item.name)}</a></td>',
+                      f'<td>{escape_html(item.id)}</td>',
+                      f'<td nowrap>{ABSTRACTION_LABELS[item.abstraction_status]}</td>',
+                      f'<td>{escape_html(item.summary)}</td>', '</tr>']
+        lines += ['</tbody></table>', '']
+    return lines
 
 
 def _catalog_readme(capabilities: tuple[Capability, ...]) -> bytes:
@@ -205,15 +243,15 @@ def _catalog_readme(capabilities: tuple[Capability, ...]) -> bytes:
     for category in TOP_LEVEL_CATEGORIES:
         label, slug, value = CATEGORIES[category]
         count = sum(x.category_path[0] == category for x in capabilities)
-        lines.append(f"- [{label} · {count} 项]({slug}.md)：{value}")
+        lines += [f"## [{label}（{slug}）]({slug}.md)", "", value, "", f"当前收录 {count} 项。", ""]
     return _document(lines)
 
 
 def _category_page(category: str, capabilities: tuple[Capability, ...], evidence: Mapping[str, list[Evidence]]) -> bytes:
-    label, _, value = CATEGORIES[category]
-    lines = [f"# {label}", "", value, "", "[返回总览](../README.md)", ""]
-    for item in capabilities:
-        lines += _capability_fold(item, evidence.get(item.id, ()), "../")
+    label, slug, value = CATEGORIES[category]
+    lines = [f"# {label}（{slug}）", "", value, "", "[返回总览](../README.md)", ""]
+    if capabilities:
+        lines += _capability_table(capabilities, "../")
     if not capabilities:
         lines.append("暂无沉淀能力。")
     return _document(lines)
@@ -223,7 +261,8 @@ def _capability_fold(item: Capability, evidence: Sequence[Evidence], prefix: str
     availability = "不可用" if item.lifecycle in {Lifecycle.DEGRADED, Lifecycle.RETIRED} else "当前可用"
     reuse_count = sum(x.evidence_type.casefold() in {"reuse", "reuse_outcome", "reused"} for x in evidence)
     return ["<details>",
-            f"<summary>{escape_markdown(item.name)} · {LIFECYCLE_LABEL[item.lifecycle]} · {availability}</summary>", "",
+            f"<summary>{escape_markdown(item.name)}（{escape_markdown(item.id)}） · {ABSTRACTION_LABELS[item.abstraction_status]}</summary>", "",
+            f"- 验证状态：{LIFECYCLE_LABEL[item.lifecycle]}（不代表已抽象或已获复用批准）",
             f"- 解决什么：{escape_markdown(item.summary)}", f"- 适合什么：{escape_markdown(item.contract)}",
             f"- 复用依据：{len(evidence)} 条证据，{reuse_count} 次复用记录。",
             f"- 来源：{_source_description(item)}",
@@ -240,7 +279,8 @@ def _capability_page(item: Capability, evidence: tuple[Evidence, ...], relations
     consumers = tuple(x.source_id for x in related if x.target_id == item.id and x.relationship_type.casefold() in consumer_types)
     related_demands = tuple(x.requirement.intent for x in demands if x.linked_capability_id == item.id)
     availability = "不可用" if item.lifecycle in {Lifecycle.DEGRADED, Lifecycle.RETIRED} else "当前可用"
-    lines = [f"# {escape_markdown(item.name)}", "", escape_markdown(item.summary), "",
+    lines = [f"# {escape_markdown(item.name)}（{escape_markdown(item.id)}）", "", escape_markdown(item.summary), "",
+             f"- 状态：{ABSTRACTION_LABELS[item.abstraction_status]}",
              "## 状态与来源", "", f"- 生命周期：{LIFECYCLE_LABEL[item.lifecycle]}", f"- 可用性：{availability}",
              f"- 类型：{escape_markdown(item.artifact_type.value)}", f"- 来源：{_source_description(item)}",
              f"- 来源版本：{escape_markdown(item.source_revision)}", "", "## 契约", "", escape_markdown(item.contract), "",
@@ -330,7 +370,7 @@ def _read_valid_manifest(root: Path) -> RenderManifest | None:
         return None
     try:
         manifest = _manifest_from_bytes(path.read_bytes())
-        return manifest if (manifest.renderer_version == RENDERER_VERSION
+        return manifest if (manifest.renderer_version in {"1", "2", "3", "4", "5", RENDERER_VERSION}
                             and _manifest_files_match(root, manifest)) else None
     except (OSError, RenderBlocked):
         return None

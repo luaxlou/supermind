@@ -151,10 +151,11 @@ def _run_git(*argv: str, cwd: Path | None = None) -> bytes:
 
 def _capability(identifier: str, source: Path, summary: str = "Reusable capability") -> Capability:
     return Capability(
+        abstraction_status="abstracted",
         id=identifier,
         name=identifier.title(),
         summary=summary,
-        category_path=("Code and components", identifier),
+        category_path=("code", identifier),
         facets=(identifier,),
         contract=f"Provide {identifier}",
         constraints=(),
@@ -242,6 +243,84 @@ def test_two_devices_merge_changes_to_different_entities(devices):
     } == {"login", "upload"}
 
 
+def test_purge_rewrites_history_and_blocks_old_device(devices):
+    bare, source, a, b = devices
+    a.mutate(_capability_event("login", device="a", source=source))
+    a.mutate(_capability_event("upload", device="a", source=source))
+    b.sync()
+    a.paths.generations.mkdir(parents=True, exist_ok=True)
+    (a.paths.generations / "old-payload").write_text("upload")
+    (a.paths.root / "migration-stage").mkdir()
+    (a.paths.root / "migration-stage" / "old-payload").write_text("upload")
+    old_head = a.coordinator.git.head(a.paths.checkout)
+    preview = a.coordinator.purge(("upload",))
+    assert preview["applied"] is False
+    assert a.coordinator.git.head(a.paths.checkout) == old_head
+    result = a.coordinator.purge(("upload",), confirm=True, expected_digest=preview["event_set_digest"],
+                                 expected_head=preview["remote_head"])
+    assert result["applied"] is True
+    assert set(a.replay().entities) == {("capability", "login")}
+    assert _run_git("rev-list", "--count", "main", cwd=bare).strip() == b"1"
+    assert b"upload" not in _run_git("ls-tree", "-r", "--name-only", "main", cwd=bare)
+    assert a.repository.get_capability("upload") is None
+    assert not a.paths.generations.exists()
+    assert not (a.paths.root / "migration-stage").exists()
+    with pytest.raises(SyncBlocked, match="history_epoch_mismatch"):
+        b.sync()
+    assert _run_git("rev-list", "--count", "main", cwd=bare).strip() == b"1"
+
+
+def test_purge_rejects_stale_preview_without_changes(devices):
+    _, source, a, _ = devices
+    a.mutate(_capability_event("login", device="a", source=source))
+    before = a.coordinator.git.head(a.paths.checkout)
+    with pytest.raises(SyncBlocked, match="purge_preview_stale"):
+        a.coordinator.purge(("login",), confirm=True, expected_digest="bad", expected_head=before)
+    assert a.coordinator.git.head(a.paths.checkout) == before
+
+
+def test_purge_push_rejection_preserves_local_and_remote(devices):
+    bare, source, a, _ = devices
+    a.mutate(_capability_event("login", device="a", source=source))
+    preview = a.coordinator.purge(("login",))
+    a.runner.reject_pushes = True
+    with pytest.raises(SyncBlocked, match="purge_push_rejected"):
+        a.coordinator.purge(("login",), confirm=True, expected_digest=preview["event_set_digest"],
+                           expected_head=preview["remote_head"])
+    assert a.coordinator.git.head(a.paths.checkout) == preview["remote_head"]
+    assert _run_git("rev-parse", "main", cwd=bare).strip().decode() == preview["remote_head"]
+    assert a.repository.get_capability("login") is not None
+    assert not (a.paths.root / "purge-pending.json").exists()
+
+
+def test_purge_remote_race_preserves_new_remote_commit(devices):
+    bare, source, a, b = devices
+    a.mutate(_capability_event("login", device="a", source=source))
+    preview = a.coordinator.purge(("login",))
+    a.runner.before_next_push = lambda: b.mutate(_capability_event("upload", device="b", source=source))
+    with pytest.raises(SyncBlocked, match="purge_push_rejected"):
+        a.coordinator.purge(("login",), confirm=True, expected_digest=preview["event_set_digest"],
+                           expected_head=preview["remote_head"])
+    assert _run_git("rev-parse", "main", cwd=bare).strip().decode() == b.coordinator.git.head(b.paths.checkout)
+    assert a.coordinator.git.head(a.paths.checkout) == preview["remote_head"]
+
+
+def test_purge_preserves_user_note_inside_catalog(devices):
+    _, source, a, _ = devices
+    a.mutate(_capability_event("login", device="a", source=source))
+    note = a.paths.checkout / "catalog" / "personal-note.md"
+    note.parent.mkdir(exist_ok=True)
+    note.write_text("Do not delete")
+    _run_git("add", ".", cwd=a.paths.checkout)
+    _run_git("-c", "user.name=Test", "-c", "user.email=test@localhost", "commit", "-m", "note", cwd=a.paths.checkout)
+    _run_git("push", "origin", "main", cwd=a.paths.checkout)
+    preview = a.coordinator.purge(("login",))
+    with pytest.raises(SyncBlocked, match="purge_unowned_file"):
+        a.coordinator.purge(("login",), confirm=True, expected_digest=preview["event_set_digest"],
+                           expected_head=preview["remote_head"])
+    assert note.read_text() == "Do not delete"
+
+
 def test_service_reuse_blocks_stale_payload_after_remote_reconciliation(devices):
     _, source, device_a, device_b = devices
     original = _capability_event("login", device="a", source=source)
@@ -325,10 +404,10 @@ def test_two_devices_expose_sibling_updates_as_a_search_safe_conflict(devices, e
     assert device_b.coordinator.git.status(device_b.paths.checkout) == ()
     search = CapabilitySearch(device_b.repository, embeddings)
     conflicted = search.search(RequirementProfile(
-        "req-login", "project", "login", category_hint=("Code and components", "login"),
+        "req-login", "project", "login", category_hint=("code", "login"),
     ))
     unrelated_result = search.search(RequirementProfile(
-        "req-upload", "project", "upload", category_hint=("Code and components", "upload"),
+        "req-upload", "project", "upload", category_hint=("code", "upload"),
     ))
     assert conflicted.status is SearchStatus.COMPLETE
     assert conflicted.matches == ()
@@ -385,7 +464,7 @@ def test_offline_mutation_is_searchable_then_reaches_another_checkout(devices, e
 
     assert report.sync_state is SyncState.PENDING_SYNC
     local = CapabilitySearch(device_a.repository, embeddings).search(RequirementProfile(
-        "req-login", "project", "login", category_hint=("Code and components", "login"),
+        "req-login", "project", "login", category_hint=("code", "login"),
     ))
     assert local.status is SearchStatus.COMPLETE
     assert tuple(match.capability_id for match in local.matches) == ("login",)

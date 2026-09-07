@@ -55,6 +55,8 @@ capability-memory/src/supermind_memory/lifecycle.py
 capability-memory/src/supermind_memory/migration.py
 capability-memory/src/supermind_memory/projection.py
 capability-memory/src/supermind_memory/protocol.py
+capability-memory/src/supermind_memory/purge.py
+capability-memory/src/supermind_memory/quality.py
 capability-memory/src/supermind_memory/redaction.py
 capability-memory/src/supermind_memory/renderer.py
 capability-memory/src/supermind_memory/replay.py
@@ -90,6 +92,8 @@ capability-memory/tests/integration/test_sync.py
 capability-memory/tests/unit/test_event_model.py
 capability-memory/tests/unit/test_event_store.py
 capability-memory/tests/unit/test_git_client.py
+capability-memory/tests/unit/test_purge.py
+capability-memory/tests/unit/test_quality.py
 capability-memory/tests/unit/test_redaction.py
 capability-memory/tests/unit/test_renderer.py
 capability-memory/tests/unit/test_replay.py
@@ -99,6 +103,9 @@ capability-memory/uv.lock
 docs/product/2026-09-04-capability-memory-design.md
 docs/product/2026-09-06-capability-memory-hardening-design.md
 docs/product/2026-09-06-distributed-capability-memory-design.md
+docs/product/capability-memory-purge.md
+docs/product/capability-memory-bootstrap.md
+docs/product/green-planet-login-boundary.md
 docs/product/plans/2026-09-04-capability-memory.md
 docs/product/plans/2026-09-06-capability-memory-hardening.md
 docs/superpowers/plans/2026-09-06-distributed-capability-memory.md
@@ -112,7 +119,7 @@ plugins/supermind/skills/supermind/references/capability-routing.md
 plugins/supermind/skills/supermind/references/product-state.md
 plugins/supermind/tests/test_launcher.py
 plugins/supermind/tool.lock.json
-plugins/supermind/vendor/supermind_capability_memory-0.2.0-py3-none-any.whl
+plugins/supermind/vendor/supermind_capability_memory-0.3.7-py3-none-any.whl
 scripts/verify-distribution.py
 scripts/verify.sh'
 

@@ -25,9 +25,9 @@ _FRONTMATTER_LIMIT = 64 * 1024
 _FRONTMATTER_LINES = 256
 _README_LIMIT = 64 * 1024
 _TEST_LIMIT = 64 * 1024
-_ROOT = ("Code and components",)
-_PLUGIN = ("Tools and integrations", "Plugins and MCP")
-_SKILL = ("Tools and integrations", "Codex Skills")
+_ROOT = ("code",)
+_PLUGIN = ("tools", "Plugins and MCP")
+_SKILL = ("tools", "Codex Skills")
 _REGISTRY_KEY = "capability-discovery-source-registry-v1"
 _IDENTITY_TOKENS = frozenset(("auth", "authentication", "oauth", "identity", "login", "authorization"))
 
@@ -677,7 +677,7 @@ def _capability(*, name: str, summary: str, artifact_type: ArtifactType, categor
 
 def _category(name: object, summary: str) -> tuple[str, ...]:
     tokens = set(re.findall(r"\w+", redact_text(f"{_string(name)} {summary}").casefold(), flags=re.UNICODE))
-    return ("Code and components", "Identity and access") if tokens & _IDENTITY_TOKENS else _ROOT
+    return ("code", "Identity and access") if tokens & _IDENTITY_TOKENS else _ROOT
 
 
 def _skill_directories(manifest: dict[str, Any]) -> tuple[str, ...]:

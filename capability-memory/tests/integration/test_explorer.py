@@ -33,11 +33,12 @@ def capability(
     capability_id: str,
     *,
     name: str | None = None,
-    category_path: tuple[str, ...] = ("Code and components", "Identity and access"),
+    category_path: tuple[str, ...] = ("code", "Identity and access"),
     lifecycle: Lifecycle = Lifecycle.CANDIDATE,
     confidence: float = 0.8,
 ) -> Capability:
     return Capability(
+        abstraction_status="abstracted",
         id=capability_id,
         name=name or capability_id,
         summary="OAuth login capability",
@@ -162,8 +163,8 @@ def test_overview_groups_capabilities_by_stable_top_level_category(explorer):
     output = explorer.overview()
 
     assert "| Category | Total | Observed | Candidate | Verified | Recommended | Degraded | Retired |" in output
-    assert "| Code and components | 3 | 0 | 1 | 1 | 1 | 0 | 0 |" in output
-    assert "### Code and components" in output
+    assert "| code | 3 | 0 | 1 | 1 | 1 | 0 | 0 |" in output
+    assert "### code" in output
     assert "[###] 3" in output
 
 
@@ -193,7 +194,7 @@ def test_table_sorts_by_maturity_then_reuse_score_and_escapes_cells(tmp_path):
 @pytest.mark.parametrize(
     ("filters", "expected_ids"),
     (
-        (InspectFilter(category=("Code and components",)), ("code-verified", "code-candidate")),
+        (InspectFilter(category=("code",)), ("code-verified", "code-candidate")),
         (InspectFilter(lifecycle=(Lifecycle.VERIFIED,)), ("code-verified", "data-verified")),
         (InspectFilter(stack=("PYTHON",)), ("data-verified",)),
         (InspectFilter(capability_id="code-candidate"), ("code-candidate",)),
@@ -204,7 +205,7 @@ def test_table_honors_every_inspect_filter_and_keeps_fixed_taxonomy_order(tmp_pa
     repository = CapabilityRepository.open(tmp_path / "filters.lance")
     repository.initialize()
     records = (
-        capability("data-verified", category_path=("Data and intelligence", "Models"), lifecycle=Lifecycle.VERIFIED),
+        capability("data-verified", category_path=("data", "Models"), lifecycle=Lifecycle.VERIFIED),
         capability("code-verified", lifecycle=Lifecycle.VERIFIED),
         capability("code-candidate", lifecycle=Lifecycle.CANDIDATE),
     )
@@ -222,7 +223,7 @@ def test_table_honors_every_inspect_filter_and_keeps_fixed_taxonomy_order(tmp_pa
 def test_table_orders_categories_before_lifecycle_priority(tmp_path):
     repository = CapabilityRepository.open(tmp_path / "taxonomy-order.lance")
     repository.initialize()
-    add(repository, capability("data-recommended", category_path=("Data and intelligence", "Models"), lifecycle=Lifecycle.RECOMMENDED))
+    add(repository, capability("data-recommended", category_path=("data", "Models"), lifecycle=Lifecycle.RECOMMENDED))
     add(repository, capability("code-candidate", lifecycle=Lifecycle.CANDIDATE))
 
     output = CapabilityExplorer(repository).table(InspectFilter())
@@ -525,7 +526,8 @@ from supermind_memory.explorer import CapabilityExplorer
 from supermind_memory.types import ArtifactType, CandidateMatch, Capability, Lifecycle, RequirementProfile, SearchResult, SearchStatus
 
 capability = Capability(
-    id="fifo-capability", name="FIFO", summary="", category_path=("Code and components",), facets=(), contract="", constraints=(),
+        abstraction_status="abstracted",
+        id="fifo-capability", name="FIFO", summary="", category_path=("code",), facets=(), contract="", constraints=(),
     artifact_type=ArtifactType.CODE, source_uri={str(fifo)!r}, source_revision="", content_hash="", owner="", license="", stack=(), runtime=(),
     platform=(), dependencies=(), compatibility=(), lifecycle=Lifecycle.VERIFIED, confidence=1.0, expected_net_value=1.0,
     embedding_generation="", created_at="", updated_at="", last_verified_at="2026-09-04T00:00:00Z",
@@ -586,7 +588,7 @@ def test_untrusted_markdown_and_html_render_as_inert_readable_text(explorer, log
 
 
 def test_graph_is_valid_mermaid_with_all_stable_relationship_edges(explorer):
-    output = explorer.graph(InspectFilter(category=("Code and components",)))
+    output = explorer.graph(InspectFilter(category=("code",)))
 
     assert output.startswith("```mermaid\nflowchart LR\n")
     for expected in (

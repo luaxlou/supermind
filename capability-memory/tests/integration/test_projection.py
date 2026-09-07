@@ -68,6 +68,25 @@ def test_projection_reconstructs_all_authoritative_tables(empty_repository, embe
     assert compare_projection(result, empty_repository).equivalent is True
 
 
+def test_old_projection_without_abstraction_column_is_rebuilt_from_legacy_events(empty_repository, embeddings):
+    payload = asdict(_capability("legacy"))
+    payload.pop("abstraction_status")
+    payload["category_path"] = ["Code and components"]
+    result = replay((authority("capability", "legacy", payload),))
+    project_authority(result, empty_repository, embeddings)
+    table = empty_repository._table("capabilities")
+    old_schema = table.schema.remove(table.schema.get_field_index("abstraction_status"))
+    rows = empty_repository._rows("capabilities")
+    for row in rows:
+        row.pop("abstraction_status")
+    empty_repository._overwrite_table_unlocked("capabilities", old_schema, rows)
+    project_authority(result, empty_repository, embeddings)
+    item = empty_repository.get_capability("legacy")
+    assert item.abstraction_status.value == "pending"
+    assert item.category_path == ("code",)
+    assert compare_projection(result, empty_repository).equivalent
+
+
 def test_replacement_removes_rows_absent_from_replay(empty_repository, embeddings, authority_events):
     project_authority(replay(authority_events), empty_repository, embeddings)
     empty_repository.set_metadata("stale", True)

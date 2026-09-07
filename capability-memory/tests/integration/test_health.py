@@ -1446,10 +1446,11 @@ def _authoritative_rows(repo: CapabilityRepository) -> dict[str, list[dict[str, 
 
 def _capability(capability_id: str) -> Capability:
     return Capability(
+        abstraction_status="abstracted",
         id=capability_id,
         name="OAuth login",
         summary="Reusable login flow",
-        category_path=("Code and components", "Identity and access"),
+        category_path=("code", "Identity and access"),
         facets=("authentication",),
         contract="OAuth callback",
         constraints=(),

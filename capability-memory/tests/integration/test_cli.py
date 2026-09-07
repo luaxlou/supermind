@@ -36,10 +36,11 @@ NOW = "2026-09-04T00:00:00+00:00"
 
 def capability() -> Capability:
     return Capability(
+        abstraction_status="abstracted",
         id="auth.oauth-login",
         name="OAuth login",
         summary="Reusable OAuth login",
-        category_path=("Code and components", "Authentication"),
+        category_path=("code", "Authentication"),
         facets=("oauth",),
         contract="login(input) -> session",
         constraints=("OAuth 2.1",),
@@ -180,6 +181,19 @@ def write_json(tmp_path: Path, name: str, payload: object) -> str:
     path = tmp_path / name
     path.write_text(json.dumps(payload), encoding="utf-8")
     return str(path)
+
+
+def test_audit_routes_optional_id_and_returns_versioned_json():
+    class AuditMemory(FakeMemory):
+        def audit(self, capability_id=None):
+            self.calls.append(("audit", capability_id))
+            return {"count": 0, "capabilities": [], "reuse_authorized": False}
+    for arguments, expected_id in [([], None), (["--capability-id", "auth"], "auth")]:
+        memory = AuditMemory()
+        code, stdout, stderr = run_cli(["audit", *arguments, "--format", "json"], memory)
+        assert code == 0 and not stderr
+        assert json.loads(stdout)["result"]["reuse_authorized"] is False
+        assert memory.calls == [("audit", expected_id)]
 
 
 def test_status_uses_versioned_protocol():
@@ -582,6 +596,9 @@ def test_begin_design_cli_reports_partial_contract_fit_as_adapt(tmp_path):
     assert decision["action"] == "adapt"
     assert decision["selected_capability_id"] == capability().id
     assert any("partial contract fit (0.50)" in reason for reason in decision["rationale"])
+    assert decision["human_confirmation_required"] is True
+    assert decision["abstraction_review_required"] is True
+    assert decision["execution_authorized"] is False
 
 
 def test_inspect_supports_all_explorer_views(tmp_path):

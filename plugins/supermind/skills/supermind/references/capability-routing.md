@@ -29,8 +29,17 @@ economics, and lifecycle details.
 - “查看能力库”, “show the capability library”, or equivalent: `inspect --view overview --format
   markdown`; use `--view table` when the user asks for catalog rows or filters.
 - “打开能力库”, “open the capability library”, or equivalent: `open --format json` synchronizes,
-  regenerates and validates the categorized, collapsible README, then opens the private GitHub
+  regenerates and validates the expanded, categorized README tree, then opens the private GitHub
   repository. `render --format json` refreshes generated Markdown without opening the browser.
+- “清理某分组”: use `remove --category <root> --category <subgroup> --format json` to preview
+  exact members and references. Only after human authorization apply with `--confirm
+  --expected-digest <preview-digest>`. Add `--exclude-future` to prevent automatic re-import of
+  that category. This removes library entries, not installed Skills or source code. A stale preview
+  or referenced entry blocks deletion. Preserve history; never force-delete dependent records.
+- “修改能力名称或说明”: use `describe --input <json> --format json` with a `capabilities` array
+  of `{id, name, summary}` objects. Preserve the original meaning and scope; translation does not
+  turn a business-specific implementation into a generic abstraction. The command leaves contracts,
+  source identity and verification claims unchanged and synchronizes the generated Markdown.
 - “显示登录能力”, “show the login capability”, or equivalent: resolve the capability identifier
   from the latest complete search or table view, then use `inspect --view detail --capability-id
   <id> --format markdown`.
@@ -46,7 +55,11 @@ economics, and lifecycle details.
 Never substitute source-file scanning for these views, and never hide a
 Capability Memory exit `3` behind a hand-written summary.
 
-Decision views use the same contract gate as `begin-design`: a declared exact contract is reusable,
+Decision views are recommendations only. Assess business-independent abstraction and positive net
+value, then obtain explicit human confirmation for every specific reuse or adaptation before acting.
+Library membership, verification, or a previous approval never authorizes another use.
+
+Decision views use the same contract gate as `begin-design`: a declared exact contract is a reuse candidate,
 a declared partial contract requires adaptation, and a zero-fit candidate is rejected even when its
 semantic similarity or reuse score places it first. With no declared contract terms, verified,
 positive-value candidates remain eligible under the other gates. Runtime, platform, license, stack,

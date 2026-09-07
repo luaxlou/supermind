@@ -459,6 +459,7 @@ def _fixture_relationship(item):
 def _capability(item, source):
     now = datetime.now(timezone.utc).isoformat()
     return Capability(
+        abstraction_status="abstracted",  # Evaluation fixtures model already-extracted contracts.
         id=item["id"], name=item["name"], summary=item["summary"],
         category_path=tuple(item["category_path"]), facets=(), contract=item["contract"],
         constraints=(), artifact_type=ArtifactType.CODE, source_uri=source.as_uri(),
