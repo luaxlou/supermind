@@ -29,6 +29,29 @@ Supermind 希望把这些工作连接起来：让用户聚焦目标与关键判�
 
 Supermind 的目标不是积累尽可能多的能力，而是让每一次沉淀，都能减少未来的重复劳动。
 
+## 如何安装
+
+在支持插件的 Codex 环境中，打开终端执行：
+
+```bash
+codex plugin marketplace add luaxlou/supermind --ref main
+codex plugin add supermind@supermind
+```
+
+安装后新建一个 Codex 任务即可使用，无需安装 Superpowers。
+
+## 如何使用
+
+在任务中输入 `$supermind`，然后直接描述目标，例如：
+
+> 用 Supermind 给这个产品增加手机号登录功能。
+
+> 用 Supermind 查看能力库，评估是否已有适合当前项目的登录能力。
+
+不必手动安排工作流。Supermind 会理解现状、组织工作，并在关键选择及每次具体复用前请你确认。
+
+首次使用能力库时，需要指定或创建一个 GitHub 私有仓库，并完成 GitHub 命令行认证；后续由本地工具管理和增量同步。
+
 ## 进一步了解
 
-[安装与使用](docs/usage.md) · [能力库建设与自举](docs/product/capability-memory-bootstrap.md)
+[详细使用指南](docs/usage.md) · [能力库建设与自举](docs/product/capability-memory-bootstrap.md)
