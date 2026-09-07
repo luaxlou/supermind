@@ -202,3 +202,15 @@ def test_detail_has_one_title_and_keeps_action_sections_without_metadata_wrapper
     assert "## 触发场景" in page and "## 接入方式" in page
     assert "## 契约" not in page and "## 使用条件" not in page
     assert "暂无" not in page and "净价值" not in page
+    assert "\n## 触发场景\n\n- 运行本地应用。\n" in page
+    assert "⏎" not in page
+
+
+def test_detail_preserves_links_lists_and_code_without_turning_code_comments_into_titles():
+    body = "# Demo\n\n## 接入\n\n[安装说明](https://example.com/docs)\n\n1. 安装客户端。\n\n```sh\n# 保留代码注释\nnova start\n```\n\n<script>alert(1)</script>"
+    item = replace(_capability("demo", "Demo", Lifecycle.VERIFIED), contract=body, constraints=())
+    page = render_files(replay((_event(item, "markdown-body"),)))[PurePosixPath("capabilities/demo.md")].decode()
+    assert "[安装说明](https://example.com/docs)" in page
+    assert "\n1. 安装客户端。\n" in page
+    assert "```sh\n# 保留代码注释\nnova start\n```" in page
+    assert "<script>" not in page

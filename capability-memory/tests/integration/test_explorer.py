@@ -228,7 +228,7 @@ def test_table_orders_categories_before_lifecycle_priority(tmp_path):
     assert output.index("code-candidate") < output.index("data-recommended")
 
 
-def test_detail_shares_readable_repository_card_and_preserves_verification(explorer):
+def test_detail_focuses_on_use_without_audit_metadata(explorer):
     output = explorer.detail("auth.oauth-login")
 
     assert "Source revision" not in output
@@ -237,11 +237,12 @@ def test_detail_shares_readable_repository_card_and_preserves_verification(explo
     for expected in (
         "使用说明",
         "使用条件",
-        "验证记录",
         "OAuth callback creates an authenticated session",
-        "hours saved",
     ):
         assert expected in output
+    assert "验证记录" not in output
+    assert "hours saved" not in output
+    assert explorer._repository.list_evidence("auth.oauth-login")
 
 
 def test_detail_handles_missing_capability_without_mutating_repository(explorer):

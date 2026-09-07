@@ -21,7 +21,7 @@ from supermind_memory.replay import ReplayResult
 from supermind_memory.taxonomy import TOP_LEVEL_CATEGORIES
 from supermind_memory.types import AbstractionStatus, Capability, Evidence, Lifecycle, Relationship
 
-RENDERER_VERSION = "11"
+RENDERER_VERSION = "12"
 MANIFEST_PATH = PurePosixPath(".supermind/render-manifest.json")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 CATEGORIES = {
@@ -240,30 +240,53 @@ def _category_page(category: str, capabilities: tuple[Capability, ...], evidence
     return _document(lines)
 
 
+def _contract_body(value: str) -> str:
+    """Preserve document structure while keeping arbitrary HTML inert."""
+    lines = []
+    in_code = False
+    for line in value.splitlines():
+        if re.fullmatch(r"```[a-zA-Z0-9_-]*", line):
+            lines.append(line)
+            in_code = not in_code
+            continue
+        if in_code:
+            lines.append(line)
+            continue
+        if line.startswith("# "):
+            continue
+        link = re.fullmatch(r"\[([^\[\]]+)\]\((https?://[^\s)]+)\)", line)
+        if link:
+            label, target = link.groups()
+            try:
+                parsed = urlsplit(target)
+                safe = parsed.hostname and not parsed.username and not parsed.password
+            except ValueError:
+                safe = False
+            if safe:
+                lines.append(f"[{escape_markdown(label)}]({quote(target, safe=':/?=&%#-._~')})")
+                continue
+        lines.append(escape_markdown(line))
+    if in_code:
+        lines.append("```")
+    return "\n".join(lines).strip()
+
+
 def _capability_page(item: Capability, evidence: tuple[Evidence, ...], relationships: tuple[Relationship, ...], demands: tuple[Any, ...]) -> bytes:
     related = tuple(x for x in relationships if item.id in {x.source_id, x.target_id})
     dependency_types = {"dependency", "depends_on", "depends-on"}
-    alternative_types = {"alternative", "alternative_to", "alternative-to"}
-    consumer_types = {"consumer", "consumed_by", "consumed-by", *dependency_types}
     dependencies = tuple(x.target_id for x in related if x.source_id == item.id and x.relationship_type.casefold() in dependency_types)
-    alternatives = tuple(x.target_id if x.source_id == item.id else x.source_id for x in related if x.relationship_type.casefold() in alternative_types)
-    consumers = tuple(x.source_id for x in related if x.target_id == item.id and x.relationship_type.casefold() in consumer_types)
-    related_demands = tuple(x.requirement.intent for x in demands if x.linked_capability_id == item.id)
-    body = "\n".join(line for line in item.contract.splitlines() if not line.startswith("# ")).strip()
-    lines = [f"# {escape_markdown(item.name)}", "", f"<sub>{_html_text(item.summary)}</sub>", ""]
+    body = _contract_body(item.contract)
+    lines = [f"# {escape_markdown(item.name)}", "", escape_markdown(item.summary), ""]
     if item.source_uri.startswith(("https://", "http://")):
         lines += [_source_description(item), ""]
     if body:
         if not re.search(r"^## ", body, re.MULTILINE):
             lines += ["## 使用说明", ""]
-        lines += [escape_markdown(body), ""]
-    for heading, values in (("使用条件", item.constraints), ("依赖", dependencies),
-                            ("替代方案", alternatives), ("使用方", consumers), ("相关需求", related_demands)):
+        lines += [body, ""]
+    for heading, values in (("使用条件", item.constraints),
+                            ("依赖", tuple(dict.fromkeys((*item.dependencies, *dependencies))))):
         if values:
             lines += [f"## {heading}", "", *_bullets(values), ""]
-    records = tuple(x for x in evidence if x.evidence_type not in {"source", "source_availability"})
-    if records:
-        lines += ["<details>", "<summary>验证记录</summary>", "", *_evidence_lines(records), "", "</details>", ""]
     lines += ["[返回能力库](../README.md)"]
     return _document(lines)
 
@@ -345,7 +368,7 @@ def _read_valid_manifest(root: Path) -> RenderManifest | None:
         return None
     try:
         manifest = _manifest_from_bytes(path.read_bytes())
-        return manifest if (manifest.renderer_version in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", RENDERER_VERSION}
+        return manifest if (manifest.renderer_version in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", RENDERER_VERSION}
                             and _manifest_files_match(root, manifest)) else None
     except (OSError, RenderBlocked):
         return None

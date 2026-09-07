@@ -32,6 +32,7 @@ fi
 expected_files='.agents/plugins/marketplace.json
 .gitignore
 README.md
+docs/examples/nova-cli-capability.md
 capability-memory/evaluation/retrieval-v1.json
 capability-memory/model.lock.json
 capability-memory/pyproject.toml
@@ -122,6 +123,8 @@ plugins/supermind/skills/supermind/references/product-state.md
 plugins/supermind/tests/test_launcher.py
 plugins/supermind/tool.lock.json
 plugins/supermind/vendor/supermind_capability_memory-0.3.7-py3-none-any.whl
+plugins/supermind/vendor/supermind_capability_memory-0.3.12-py3-none-any.whl
+plugins/supermind/vendor/supermind_capability_memory-0.3.13-py3-none-any.whl
 scripts/verify-distribution.py
 scripts/verify.sh'
 
