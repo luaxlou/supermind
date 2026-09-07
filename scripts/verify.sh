@@ -130,6 +130,7 @@ plugins/supermind/skills/supermind/references/actions.md
 plugins/supermind/skills/supermind/references/abstraction-review.md
 plugins/supermind/skills/supermind/references/capability-routing.md
 plugins/supermind/skills/supermind/references/core-decision.md
+plugins/supermind/skills/supermind/references/design-stage.md
 plugins/supermind/skills/supermind/references/scenarios.md
 plugins/supermind/skills/supermind/references/product-state.md
 plugins/supermind/tests/test_launcher.py
