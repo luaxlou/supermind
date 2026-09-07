@@ -136,7 +136,7 @@ plugins/supermind/tool.lock.json
 plugins/supermind/vendor/supermind_capability_memory-0.3.7-py3-none-any.whl
 plugins/supermind/vendor/supermind_capability_memory-0.3.12-py3-none-any.whl
 plugins/supermind/vendor/supermind_capability_memory-0.3.13-py3-none-any.whl
-plugins/supermind/vendor/supermind_capability_memory-0.3.14-py3-none-any.whl
+plugins/supermind/vendor/supermind_capability_memory-0.3.15-py3-none-any.whl
 scripts/verify-distribution.py
 scripts/verify.sh'
 

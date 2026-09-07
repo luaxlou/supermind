@@ -173,7 +173,8 @@ def test_root_readme_keeps_internal_digests_in_manifest_not_human_page():
     assert result.digest in files[PurePosixPath(".supermind/render-manifest.json")].decode()
     assert "2026-09-06T12:00:00Z" not in readme
     assert "2026-09-06" in readme
-    assert "待解决复用需求" in readme
+    assert "待解决复用需求" not in readme
+    assert "demands/open.md" not in readme
     assert "最近变化" in readme
     recent = readme.split("## 最近变化", 1)[1]
     assert "- [登录与身份服务](capabilities/login.md)" in recent

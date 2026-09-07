@@ -21,7 +21,7 @@ from supermind_memory.replay import ReplayResult
 from supermind_memory.taxonomy import TOP_LEVEL_CATEGORIES
 from supermind_memory.types import AbstractionStatus, Capability, Evidence, Lifecycle, Relationship
 
-RENDERER_VERSION = "12"
+RENDERER_VERSION = "13"
 MANIFEST_PATH = PurePosixPath(".supermind/render-manifest.json")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 CATEGORIES = {
@@ -172,7 +172,6 @@ def _root_readme(
     capabilities: tuple[Capability, ...], evidence: Mapping[str, list[Evidence]],
     relationships: tuple[Relationship, ...], demands: tuple[Any, ...], digest: str,
 ) -> bytes:
-    open_demands = tuple(x for x in demands if x.status.casefold() not in {"resolved", "linked"})
     lines = ["# Supermind 能力库", "",
              "Supermind 是协助你开发和改进软件的 AI 工具。这个仓库是它的能力库："
              "记录开发过程中值得保留的实现和方法，帮助后续项目减少重复工作。", "",
@@ -189,8 +188,7 @@ def _root_readme(
         lines += _capability_table(members)
     lines.append("")
     lines.append("")
-    lines += ["## 待解决复用需求", "", f"当前有 {len(open_demands)} 项未解决需求。", "",
-              "[查看待解决需求](demands/open.md)", "", "## 最近变化", ""]
+    lines += ["## 最近变化", ""]
     recent = sorted(capabilities, key=lambda x: (x.updated_at, x.id), reverse=True)[:5]
     if recent:
         lines += [f"- [{escape_markdown(x.name)}]({_capability_path(x.id)})（{escape_markdown(x.updated_at.split('T')[0])}）" for x in recent]
@@ -368,7 +366,7 @@ def _read_valid_manifest(root: Path) -> RenderManifest | None:
         return None
     try:
         manifest = _manifest_from_bytes(path.read_bytes())
-        return manifest if (manifest.renderer_version in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", RENDERER_VERSION}
+        return manifest if (manifest.renderer_version in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", RENDERER_VERSION}
                             and _manifest_files_match(root, manifest)) else None
     except (OSError, RenderBlocked):
         return None
