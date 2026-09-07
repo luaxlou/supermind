@@ -111,6 +111,7 @@ docs/product/2026-09-07-core-decision-mechanism-design.md
 docs/product/capability-memory-purge.md
 docs/product/2026-09-07-reuse-meta-capability-review.md
 docs/engineering/wireframe-design-baseline.md
+docs/engineering/requirements-baseline.md
 docs/product/capability-memory-bootstrap.md
 docs/product/green-planet-login-boundary.md
 docs/product/supermind-decision-model.md
