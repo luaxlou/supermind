@@ -162,19 +162,15 @@ def login_result() -> SearchResult:
 def test_overview_groups_capabilities_by_stable_top_level_category(explorer):
     output = explorer.overview()
 
-    assert "| Category | Total | Observed | Candidate | Verified | Recommended | Degraded | Retired |" in output
-    assert "| code | 3 | 0 | 1 | 1 | 1 | 0 | 0 |" in output
-    assert "### code" in output
-    assert "[###] 3" in output
+    assert "### 代码（code）" in output
+    assert '<th width="35%">名称</th>' in output
+    assert '<th width="65%">说明</th>' in output
+    assert "Lifecycle" not in output
+    assert "Abstraction status" not in output
 
 
-def test_overview_exposes_every_lifecycle_without_hiding_states_in_total(explorer):
-    output = explorer.overview()
-
-    assert (
-        "| Category | Total | Observed | Candidate | Verified | Recommended | Degraded | Retired |"
-        in output
-    )
+def test_overview_uses_the_catalog_presentation(explorer):
+    assert explorer.overview() == explorer.table(InspectFilter())
 
 
 def test_table_sorts_by_maturity_then_reuse_score_and_escapes_cells(tmp_path):
@@ -188,7 +184,7 @@ def test_table_sorts_by_maturity_then_reuse_score_and_escapes_cells(tmp_path):
     output = CapabilityExplorer(repository).table(InspectFilter())
 
     assert output.index("beta") < output.index("alpha")
-    assert "name \\| with ⏎ newline" in output
+    assert "name | with\nnewline" in output
 
 
 @pytest.mark.parametrize(
@@ -216,7 +212,8 @@ def test_table_honors_every_inspect_filter_and_keeps_fixed_taxonomy_order(tmp_pa
 
     output = CapabilityExplorer(repository).table(filters)
 
-    actual_ids = tuple(line.split(" | ")[1] for line in output.splitlines() if line.startswith("| ") and "---" not in line and " ID " not in line)
+    import re
+    actual_ids = tuple(re.findall(r'href="capabilities/([^"/]+)\.md"', output))
     assert actual_ids == expected_ids
 
 
@@ -231,19 +228,16 @@ def test_table_orders_categories_before_lifecycle_priority(tmp_path):
     assert output.index("code-candidate") < output.index("data-recommended")
 
 
-def test_detail_includes_contract_constraints_revision_evidence_economics_maturity_and_timestamps(explorer):
+def test_detail_shares_readable_repository_card_and_preserves_verification(explorer):
     output = explorer.detail("auth.oauth-login")
 
+    assert "Source revision" not in output
+    assert "Maturity" not in output
+    assert "Abstraction status" not in output
     for expected in (
-        "Contract",
-        "Constraints",
-        "Source revision",
-        "Evidence",
-        "Economics",
-        "Maturity",
-        "Created at",
-        "Updated at",
-        "Last verified at",
+        "使用说明",
+        "使用条件",
+        "验证记录",
         "OAuth callback creates an authenticated session",
         "hours saved",
     ):

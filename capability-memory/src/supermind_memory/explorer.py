@@ -73,48 +73,25 @@ class CapabilityExplorer:
         self._repository = repository
 
     def overview(self) -> str:
-        """Summarize every taxonomy root with a stable maturity distribution."""
-        capabilities = self._repository.list_capabilities()
-        lines = [
-            "# Capability overview",
-            "",
-            "| Category | Total | Observed | Candidate | Verified | Recommended | Degraded | Retired |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-        ]
-        for category in TOP_LEVEL_CATEGORIES:
-            members = [item for item in capabilities if item.category_path[:1] == (category,)]
-            counts = {lifecycle: sum(item.lifecycle is lifecycle for item in members) for lifecycle in Lifecycle}
-            lines.append(
-                "| "
-                f"{_markdown_cell(category)} | {len(members)} | {counts[Lifecycle.OBSERVED]} | "
-                f"{counts[Lifecycle.CANDIDATE]} | {counts[Lifecycle.VERIFIED]} | "
-                f"{counts[Lifecycle.RECOMMENDED]} | {counts[Lifecycle.DEGRADED]} | "
-                f"{counts[Lifecycle.RETIRED]} |"
-            )
-        lines.append("")
-        for category in TOP_LEVEL_CATEGORIES:
-            total = sum(item.category_path[:1] == (category,) for item in capabilities)
-            lines.extend((f"### {_markdown_text(category)}", f"[{('#' * total) or '-'}] {total}", ""))
-        return "\n".join(lines)
+        """Browse capabilities with the same presentation as the repository."""
+        return self.table(InspectFilter())
 
     def table(self, filters: InspectFilter) -> str:
-        """Render the selected catalog rows in deterministic maturity/value order."""
-        capabilities = self._filtered_capabilities(filters)
-        lines = [
-            "# Capability catalog",
-            "",
-            "| ID | Name | Category | Abstraction status | Lifecycle | Reuse score | Expected net value |",
-            "| --- | --- | --- | --- | --- | ---: | ---: |",
-        ]
-        for item, score in capabilities:
-            lines.append(
-                "| "
-                f"{_markdown_cell(item.id)} | {_markdown_cell(item.name)} | "
-                f"{_markdown_cell(' / '.join(item.category_path))} | {_markdown_cell(item.abstraction_status.value)} | {_markdown_cell(item.lifecycle.value)} | "
-                f"{_number(score)} | {_number(item.expected_net_value)} |"
-            )
+        """Render names and descriptions grouped by purpose."""
+        from supermind_memory.renderer import CATEGORIES, _capability_table
+        from supermind_memory.types import AbstractionStatus
+
+        capabilities = tuple(item for item, _ in self._filtered_capabilities(filters)
+                             if item.abstraction_status is not AbstractionStatus.NOT_EXTRACTING
+                             and item.lifecycle is not Lifecycle.RETIRED)
+        lines = ["# 能力库", ""]
+        for category in TOP_LEVEL_CATEGORIES:
+            members = tuple(item for item in capabilities if item.category_path[0] == category)
+            if members:
+                label, slug, _ = CATEGORIES[category]
+                lines += [f"### {label}（{slug}）", "", *_capability_table(members)]
         if not capabilities:
-            lines.append("| — | No capabilities match this filter | — | — | — | — | — |")
+            lines.append("暂无匹配能力。")
         return "\n".join(lines) + "\n"
 
     def detail(self, capability_id: str) -> str:
@@ -122,84 +99,10 @@ class CapabilityExplorer:
         capability = self._repository.get_capability(capability_id)
         if capability is None:
             return f"Capability not found: {_markdown_text(capability_id)}\n"
+        from supermind_memory.renderer import _capability_page
+
         evidence = tuple(sorted(self._repository.list_evidence(capability.id), key=lambda item: item.id))
-        score = _capability_reuse_score(capability, evidence)
-        lines = [
-            f"# Capability: {_markdown_text(capability.id)}",
-            "",
-            "| Field | Value |",
-            "| --- | --- |",
-            _row("Name", capability.name),
-            _row("Category", " / ".join(capability.category_path)),
-            _row("Maturity", capability.lifecycle.value),
-            _row("Abstraction status", capability.abstraction_status.value),
-            _row("Reuse score", _number(score)),
-            _row("Contract", capability.contract),
-            _row("Constraints", _joined(capability.constraints)),
-            _row("Facets", _joined(capability.facets)),
-            _row("Source", capability.source_uri),
-            _row("Source revision", capability.source_revision),
-            _row("Content hash", capability.content_hash),
-            _row("Artifact type", capability.artifact_type.value),
-            _row("Owner", capability.owner),
-            _row("License", capability.license),
-            _row("Stack", _joined(capability.stack)),
-            _row("Runtime", _joined(capability.runtime)),
-            _row("Platform", _joined(capability.platform)),
-            _row("Dependencies", _joined(capability.dependencies)),
-            _row("Compatibility", _joined(capability.compatibility)),
-            _row("Expected net value", _number(capability.expected_net_value)),
-            _row("Confidence", _number(capability.confidence)),
-            _row("Created at", capability.created_at),
-            _row("Updated at", capability.updated_at),
-            _row("Last verified at", capability.last_verified_at or "—"),
-            "",
-            "## Evidence",
-            "",
-            "| ID | Type | Outcome | Metric | Confidence | Observed at | Supporting source |",
-            "| --- | --- | --- | --- | ---: | --- | --- |",
-        ]
-        if evidence:
-            lines.extend(
-                "| "
-                f"{_markdown_cell(item.id)} | {_markdown_cell(item.evidence_type)} | "
-                f"{_markdown_cell(item.outcome)} | {_markdown_cell(_metric(item))} | "
-                f"{_number(item.confidence)} | {_markdown_cell(item.observed_at)} | "
-                f"{_markdown_cell(item.supporting_uri or '—')} |"
-                for item in evidence
-            )
-        else:
-            lines.append("| — | No evidence | — | — | — | — | — |")
-        lines.extend(
-            (
-                "",
-                "## Economics",
-                "",
-                "| Evidence | Integration effort | Benefit | Failure risk |",
-                "| --- | ---: | ---: | ---: |",
-            )
-        )
-        if evidence:
-            lines.extend(
-                "| "
-                f"{_markdown_cell(item.id)} | {_number(item.integration_effort)} | "
-                f"{_number(item.benefit)} | {_number(item.failure_risk)} |"
-                for item in evidence
-            )
-        else:
-            lines.append("| — | 0 | 0 | 0 |")
-        relationships = self._relationships_for((capability.id,))
-        lines.extend(("", "## Relationships", "", "| Type | Source | Target | Compatibility |", "| --- | --- | --- | --- |"))
-        if relationships:
-            lines.extend(
-                "| "
-                f"{_markdown_cell(item.relationship_type)} | {_markdown_cell(item.source_id)} | "
-                f"{_markdown_cell(item.target_id)} | {_markdown_cell(_joined(item.compatibility))} |"
-                for item in relationships
-            )
-        else:
-            lines.append("| — | No relationships | — | — |")
-        return "\n".join(lines) + "\n"
+        return _capability_page(capability, evidence, self._relationships_for((capability.id,)), ()).decode()
 
     def decision(self, requirement: RequirementProfile, result: SearchResult) -> str:
         """Explain the complete search result without converting a failure into a no-match."""

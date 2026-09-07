@@ -55,7 +55,7 @@ def _capability(identifier: str, name: str, lifecycle: Lifecycle) -> Capability:
     )
 
 
-def test_root_readme_uses_grouped_bilingual_tables():
+def test_root_readme_uses_grouped_name_and_description_tables():
     login = _capability("login", "登录与身份服务", Lifecycle.RECOMMENDED)
     upload = replace(
         login,
@@ -72,12 +72,12 @@ def test_root_readme_uses_grouped_bilingual_tables():
     assert "<details>" not in readme
     assert "### 代码（code）" in readme
     assert "[代码（code）]" not in readme
-    assert readme.count('<th width="20%">名称</th>') == 2
-    assert '<th width="25%">英文标识</th>' in readme
-    assert '<th width="10%">状态</th>' in readme
-    assert '<th width="45%">说明</th>' in readme
-    assert '<td nowrap>待抽象</td>' in readme
-    assert '<td>login</td>' in readme
+    assert readme.count('<th width="35%">名称</th>') == 2
+    assert "英文标识" not in readme
+    assert "状态" not in readme
+    assert '<th width="65%">说明</th>' in readme
+    assert "待抽象" not in readme
+    assert "<sub>统一手机号身份和登录会话。</sub>" in readme
     assert "抽象状态" not in readme
     assert "##### 身份认证（Authentication）" in readme
     assert '<td nowrap><a href="capabilities/login.md">登录与身份服务</a></td>' in readme
@@ -91,7 +91,6 @@ def test_root_readme_uses_grouped_bilingual_tables():
     assert '<a href="../capabilities/upload.md">文件上传</a>' in category
     assert "<details>" not in category
     assert "每次复用或适配都必须经人确认" in readme
-    assert "具体业务实现仅作为来源" in readme
     assert "vector_score" not in readme
 
 
@@ -112,8 +111,8 @@ def test_legacy_capability_is_pending_abstraction_with_canonical_category():
     assert item.lifecycle is Lifecycle.RECOMMENDED
     readme = render_files(result)[PurePosixPath("README.md")].decode()
     assert "代码（code）" in readme
-    assert "待抽象来源" in readme
-    assert "待抽象" in readme
+    assert "待抽象来源" not in readme
+    assert "待抽象" not in readme
     assert "可独立接入" in readme
     assert "Code and components" not in readme
     assert PurePosixPath("catalog/code.md") in render_files(result)
@@ -140,8 +139,14 @@ def test_render_files_returns_every_required_repository_view():
         PurePosixPath(".supermind/render-manifest.json"),
     }
     detail = files[PurePosixPath("capabilities/login%3Aoauth.md")].decode()
-    for heading in ("契约", "约束", "验证证据", "复用经济性", "依赖", "替代方案", "使用方", "冲突", "相关需求"):
-        assert f"## {heading}" in detail
+    assert "状态" not in detail
+    assert "来源版本" not in detail
+    assert "生命周期" not in detail
+    assert "可用性" not in detail
+    assert "## 使用说明" in detail
+    assert "## 使用条件" in detail
+    for heading in ("契约", "验证证据", "复用经济性", "依赖", "替代方案", "使用方", "相关需求"):
+        assert f"## {heading}" not in detail
 
 
 def test_untrusted_labels_cannot_inject_html_or_mermaid():
@@ -176,3 +181,24 @@ def test_root_readme_keeps_internal_digests_in_manifest_not_human_page():
     assert "关系概览" not in readme
     assert "```mermaid" not in readme
     assert PurePosixPath("relationships.md") in files
+
+
+def test_remote_source_is_clickable_and_local_path_is_not_presented_as_official_project():
+    remote = replace(_capability("nova-cli", "应用管理（Nova CLI）", Lifecycle.CANDIDATE),
+                     source_uri="https://github.com/luaxlou/nova-run")
+    detail = render_files(replay((_event(remote, "source-link"),)))[PurePosixPath("capabilities/nova-cli.md")].decode()
+    assert "[官方项目](https://github.com/luaxlou/nova-run)" in detail
+    local = replace(remote, source_uri="/tmp/nova")
+    detail = render_files(replay((_event(local, "local-source"),)))[PurePosixPath("capabilities/nova-cli.md")].decode()
+    assert "[官方项目]" not in detail
+
+
+def test_detail_has_one_title_and_keeps_action_sections_without_metadata_wrapper():
+    item = replace(_capability("nova", "应用管理（Nova CLI）", Lifecycle.CANDIDATE),
+                   contract="# 应用管理（Nova CLI）\n\n## 触发场景\n\n- 运行本地应用。\n\n## 接入方式\n\n按官方文档接入。",
+                   constraints=())
+    page = render_files(replay((_event(item, "readable-detail"),)))[PurePosixPath("capabilities/nova.md")].decode()
+    assert sum(line.startswith("# ") for line in page.splitlines()) == 1
+    assert "## 触发场景" in page and "## 接入方式" in page
+    assert "## 契约" not in page and "## 使用条件" not in page
+    assert "暂无" not in page and "净价值" not in page

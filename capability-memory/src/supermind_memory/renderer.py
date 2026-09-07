@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlsplit
 
 from supermind_memory.event_model import canonical_json
 from supermind_memory.explorer import escape_markdown, escape_mermaid_label, stable_mermaid_node_id
@@ -21,7 +21,7 @@ from supermind_memory.replay import ReplayResult
 from supermind_memory.taxonomy import TOP_LEVEL_CATEGORIES
 from supermind_memory.types import AbstractionStatus, Capability, Evidence, Lifecycle, Relationship
 
-RENDERER_VERSION = "6"
+RENDERER_VERSION = "11"
 MANIFEST_PATH = PurePosixPath(".supermind/render-manifest.json")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 CATEGORIES = {
@@ -32,18 +32,11 @@ CATEGORIES = {
     "tools": ("工具", "tools", "收录经过评估的自动化工具和系统连接能力，例如数据导入与服务适配。安装过某个插件不等于沉淀了可复用能力。"),
     "data": ("数据", "data", "收录数据处理、检索和模型应用能力，例如清洗流程与语义检索。需要明确输入输出、数据权限和质量要求。"),
 }
-ABSTRACTION_LABELS = {AbstractionStatus.PENDING: "待抽象", AbstractionStatus.IN_PROGRESS: "抽象中",
-                      AbstractionStatus.ABSTRACTED: "已抽象", AbstractionStatus.NOT_EXTRACTING: "不提取"}
 SUBCATEGORY_LABELS = {
     "AI orchestration": "智能编排", "Capability memory": "能力管理",
     "Authentication": "身份认证", "Client adapters": "客户端适配",
     "Phone OTP and sessions": "短信登录", "Codex Skills": "Codex 技能",
     "Plugins and MCP": "插件与 MCP",
-}
-LIFECYCLE_LABEL = {
-    Lifecycle.OBSERVED: "已发现", Lifecycle.CANDIDATE: "候选",
-    Lifecycle.VERIFIED: "已验证", Lifecycle.RECOMMENDED: "推荐候选",
-    Lifecycle.DEGRADED: "需维护", Lifecycle.RETIRED: "已退役",
 }
 _FIXED_RENDER_PATHS = frozenset({
     *(PurePosixPath(f"catalog/{slug}.md") for slug in ("code-and-components", "product-and-business",
@@ -154,9 +147,10 @@ def _render_snapshot(snapshot: AuthoritySnapshot, digest: str) -> dict[PurePosix
     relationships = tuple(sorted(snapshot.relationships,
         key=lambda x: (x.relationship_type.casefold(), x.source_id, x.target_id, x.id)))
     demands = tuple(sorted(snapshot.requirement_observations, key=lambda x: x.id))
+    visible = tuple(item for item in capabilities if item.abstraction_status is not AbstractionStatus.NOT_EXTRACTING and item.lifecycle is not Lifecycle.RETIRED)
     files: dict[PurePosixPath, bytes] = {
-        PurePosixPath("README.md"): _root_readme(capabilities, evidence, relationships, demands, digest),
-        PurePosixPath("catalog/README.md"): _catalog_readme(capabilities),
+        PurePosixPath("README.md"): _root_readme(visible, evidence, relationships, demands, digest),
+        PurePosixPath("catalog/README.md"): _catalog_readme(visible),
         PurePosixPath("demands/open.md"): _demand_page(
             "Open reuse demands", tuple(x for x in demands if x.status.casefold() not in {"resolved", "linked"})),
         PurePosixPath("demands/resolved.md"): _demand_page(
@@ -165,7 +159,7 @@ def _render_snapshot(snapshot: AuthoritySnapshot, digest: str) -> dict[PurePosix
     }
     for category in TOP_LEVEL_CATEGORIES:
         _, slug, _ = CATEGORIES[category]
-        members = tuple(x for x in capabilities if x.category_path[0] == category)
+        members = tuple(x for x in visible if x.category_path[0] == category)
         files[PurePosixPath(f"catalog/{slug}.md")] = _category_page(category, members, evidence)
     for capability in capabilities:
         files[_capability_path(capability.id)] = _capability_page(
@@ -182,39 +176,31 @@ def _root_readme(
     lines = ["# Supermind 能力库", "",
              "Supermind 是协助你开发和改进软件的 AI 工具。这个仓库是它的能力库："
              "记录开发过程中值得保留的实现和方法，帮助后续项目减少重复工作。", "",
-             "Supermind 会自动发现和评估候选能力。你可以在下面按用途浏览，点击名称查看说明、来源和验证记录，"
+             "Supermind 会自动发现和评估能力。你可以在下面按用途浏览，点击名称查看说明、来源和验证记录，"
              "也可以直接让 Supermind 查询、修改或清理条目。内容保存在本地，并同步到这个私有 GitHub 仓库。", "",
-             "**收录不等于可以直接复用。** 具体业务实现仅作为来源；只有能脱离原业务使用、确实节省成本的部分，"
-             "才值得提取。每次复用或适配都必须经人确认。现有条目仍需逐项评估。", "",
-             f"## 能力与来源（{len(capabilities)} 项）", ""]
+             "每次复用或适配都必须经人确认。", "",
+             f"## 能力（{len(capabilities)} 项）", ""]
     for category in TOP_LEVEL_CATEGORIES:
         label, slug, value = CATEGORIES[category]
         members = tuple(x for x in capabilities if x.category_path[0] == category)
         if not members:
             continue
         lines += [f"### {label}（{slug}）", "", value, ""]
-        for heading, states in (("已抽象能力", {AbstractionStatus.ABSTRACTED}),
-                                ("待抽象来源", {AbstractionStatus.PENDING, AbstractionStatus.IN_PROGRESS}),
-                                ("不提取的来源", {AbstractionStatus.NOT_EXTRACTING})):
-            group = tuple(item for item in members if item.abstraction_status in states)
-            if not group and heading != "已抽象能力":
-                continue
-            lines += [f"#### {heading}", ""]
-            lines += _capability_table(group) if group else ["暂无。"]
-            lines.append("")
+        lines += _capability_table(members)
+    lines.append("")
     lines.append("")
     lines += ["## 待解决复用需求", "", f"当前有 {len(open_demands)} 项未解决需求。", "",
               "[查看待解决需求](demands/open.md)", "", "## 最近变化", ""]
     recent = sorted(capabilities, key=lambda x: (x.updated_at, x.id), reverse=True)[:5]
     if recent:
-        lines += [f"- [{escape_markdown(x.name)}]({_capability_path(x.id)})：{ABSTRACTION_LABELS[x.abstraction_status]}（{escape_markdown(x.updated_at.split('T')[0])}）" for x in recent]
+        lines += [f"- [{escape_markdown(x.name)}]({_capability_path(x.id)})（{escape_markdown(x.updated_at.split('T')[0])}）" for x in recent]
     else:
         lines.append("暂无变化。")
     return _document(lines)
 
 
 def _capability_table(capabilities: tuple[Capability, ...], prefix: str = "") -> list[str]:
-    """Group tables by subcategory, preserving bilingual names and explicit states."""
+    """Group two-column name and description tables by subcategory."""
     lines = []
     groups: dict[tuple[str, ...], list[Capability]] = {}
     for item in capabilities:
@@ -226,14 +212,11 @@ def _capability_table(capabilities: tuple[Capability, ...], prefix: str = "") ->
             categories.append(f"{label}（{group}）" if label != group else group)
         title = " / ".join(categories) or "未分类（uncategorized）"
         lines += [f"##### {escape_markdown(title)}", "", '<table width="100%">',
-                  '<thead><tr><th width="20%">名称</th><th width="25%">英文标识</th>'
-                  '<th width="10%">状态</th><th width="45%">说明</th></tr></thead>', '<tbody>']
+                  '<thead><tr><th width="35%">名称</th><th width="65%">说明</th></tr></thead>', '<tbody>']
         for item in members:
             lines += ['<tr>',
-                      f'<td nowrap><a href="{escape_html(prefix + str(_capability_path(item.id)))}">{escape_html(item.name)}</a></td>',
-                      f'<td>{escape_html(item.id)}</td>',
-                      f'<td nowrap>{ABSTRACTION_LABELS[item.abstraction_status]}</td>',
-                      f'<td>{escape_html(item.summary)}</td>', '</tr>']
+                      f'<td nowrap><a href="{escape_html(prefix + str(_capability_path(item.id)))}">{_html_text(item.name)}</a></td>',
+                      f'<td><sub>{_html_text(item.summary)}</sub></td>', '</tr>']
         lines += ['</tbody></table>', '']
     return lines
 
@@ -257,18 +240,6 @@ def _category_page(category: str, capabilities: tuple[Capability, ...], evidence
     return _document(lines)
 
 
-def _capability_fold(item: Capability, evidence: Sequence[Evidence], prefix: str) -> list[str]:
-    availability = "不可用" if item.lifecycle in {Lifecycle.DEGRADED, Lifecycle.RETIRED} else "当前可用"
-    reuse_count = sum(x.evidence_type.casefold() in {"reuse", "reuse_outcome", "reused"} for x in evidence)
-    return ["<details>",
-            f"<summary>{escape_markdown(item.name)}（{escape_markdown(item.id)}） · {ABSTRACTION_LABELS[item.abstraction_status]}</summary>", "",
-            f"- 验证状态：{LIFECYCLE_LABEL[item.lifecycle]}（不代表已抽象或已获复用批准）",
-            f"- 解决什么：{escape_markdown(item.summary)}", f"- 适合什么：{escape_markdown(item.contract)}",
-            f"- 复用依据：{len(evidence)} 条证据，{reuse_count} 次复用记录。",
-            f"- 来源：{_source_description(item)}",
-            f"- [打开完整能力卡]({prefix}{_capability_path(item.id).as_posix()})", "", "</details>", ""]
-
-
 def _capability_page(item: Capability, evidence: tuple[Evidence, ...], relationships: tuple[Relationship, ...], demands: tuple[Any, ...]) -> bytes:
     related = tuple(x for x in relationships if item.id in {x.source_id, x.target_id})
     dependency_types = {"dependency", "depends_on", "depends-on"}
@@ -278,18 +249,22 @@ def _capability_page(item: Capability, evidence: tuple[Evidence, ...], relations
     alternatives = tuple(x.target_id if x.source_id == item.id else x.source_id for x in related if x.relationship_type.casefold() in alternative_types)
     consumers = tuple(x.source_id for x in related if x.target_id == item.id and x.relationship_type.casefold() in consumer_types)
     related_demands = tuple(x.requirement.intent for x in demands if x.linked_capability_id == item.id)
-    availability = "不可用" if item.lifecycle in {Lifecycle.DEGRADED, Lifecycle.RETIRED} else "当前可用"
-    lines = [f"# {escape_markdown(item.name)}（{escape_markdown(item.id)}）", "", escape_markdown(item.summary), "",
-             f"- 状态：{ABSTRACTION_LABELS[item.abstraction_status]}",
-             "## 状态与来源", "", f"- 生命周期：{LIFECYCLE_LABEL[item.lifecycle]}", f"- 可用性：{availability}",
-             f"- 类型：{escape_markdown(item.artifact_type.value)}", f"- 来源：{_source_description(item)}",
-             f"- 来源版本：{escape_markdown(item.source_revision)}", "", "## 契约", "", escape_markdown(item.contract), "",
-             "## 约束", "", *_bullets(item.constraints), "", "## 验证证据", "", *_evidence_lines(evidence), "",
-             "## 复用经济性", "", f"- 预期净价值：{item.expected_net_value:.2f}",
-             f"- 复用记录：{sum(x.evidence_type.casefold() in {'reuse', 'reuse_outcome', 'reused'} for x in evidence)} 次", "",
-             "## 依赖", "", *_bullets(dependencies), "", "## 替代方案", "", *_bullets(alternatives), "",
-             "## 使用方", "", *_bullets(consumers), "", "## 冲突", "", "- 无未解决冲突。", "",
-             "## 相关需求", "", *_bullets(related_demands), "", "[返回能力库](../README.md)"]
+    body = "\n".join(line for line in item.contract.splitlines() if not line.startswith("# ")).strip()
+    lines = [f"# {escape_markdown(item.name)}", "", f"<sub>{_html_text(item.summary)}</sub>", ""]
+    if item.source_uri.startswith(("https://", "http://")):
+        lines += [_source_description(item), ""]
+    if body:
+        if not re.search(r"^## ", body, re.MULTILINE):
+            lines += ["## 使用说明", ""]
+        lines += [escape_markdown(body), ""]
+    for heading, values in (("使用条件", item.constraints), ("依赖", dependencies),
+                            ("替代方案", alternatives), ("使用方", consumers), ("相关需求", related_demands)):
+        if values:
+            lines += [f"## {heading}", "", *_bullets(values), ""]
+    records = tuple(x for x in evidence if x.evidence_type not in {"source", "source_availability"})
+    if records:
+        lines += ["<details>", "<summary>验证记录</summary>", "", *_evidence_lines(records), "", "</details>", ""]
+    lines += ["[返回能力库](../README.md)"]
     return _document(lines)
 
 
@@ -298,7 +273,7 @@ def _demand_page(title: str, demands: tuple[Any, ...]) -> bytes:
     if not demands:
         lines.append("暂无记录。")
     for item in demands:
-        lines += [f"## {escape_markdown(item.requirement.intent)}", "", f"- 状态：{escape_markdown(item.status)}",
+        lines += [f"## {escape_markdown(item.requirement.intent)}", "",
                   f"- 契约：{escape_markdown(item.requirement.contract or '—')}",
                   f"- 关联能力：{escape_markdown(item.linked_capability_id or '—')}", ""]
     return _document(lines)
@@ -370,7 +345,7 @@ def _read_valid_manifest(root: Path) -> RenderManifest | None:
         return None
     try:
         manifest = _manifest_from_bytes(path.read_bytes())
-        return manifest if (manifest.renderer_version in {"1", "2", "3", "4", "5", RENDERER_VERSION}
+        return manifest if (manifest.renderer_version in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", RENDERER_VERSION}
                             and _manifest_files_match(root, manifest)) else None
     except (OSError, RenderBlocked):
         return None
@@ -435,8 +410,19 @@ def _is_renderer_owned_output(path: PurePosixPath) -> bool:
     return quote(unquote(encoded), safe="-._~") == encoded
 
 
+def _html_text(value: str) -> str:
+    text = escape_html(value).replace("://", ":&#47;&#47;")
+    for char in "[]`":
+        text = text.replace(char, f"&#{ord(char)};")
+    return text
+
+
 def _source_description(item: Capability) -> str:
     kind = {"code": "代码实现", "service": "服务实现", "api": "接口能力"}.get(item.artifact_type.value, "受控能力来源")
+    source = urlsplit(item.source_uri)
+    if source.scheme in {"https", "http"} and source.hostname and not source.username and not source.password:
+        url = quote(item.source_uri, safe=":/?=&%#-._~")
+        return f"[官方项目]({url})"
     return f"{kind}（{escape_markdown(item.owner)}）"
 
 
@@ -449,8 +435,11 @@ def _bullets(values: Sequence[str]) -> list[str]:
 
 
 def _evidence_lines(values: Sequence[Evidence]) -> list[str]:
-    return ([f"- {escape_markdown(x.evidence_type)}：{escape_markdown(x.outcome)}（{escape_markdown(x.source_project)}）" for x in values]
-            or ["- 暂无验证证据。"])
+    lines = []
+    for item in values:
+        metric = f"；{item.metric_name}: {item.metric_value}" if item.metric_name else ""
+        lines.append(f"- {escape_markdown(item.evidence_type)}：{escape_markdown(item.outcome + metric)}")
+    return lines
 
 
 def _document(lines: Sequence[str]) -> bytes:
