@@ -1,7 +1,7 @@
 {
   "name": "supermind",
-  "version": "0.3.8",
-  "description": "从产品想法到软件交付，自动发现候选能力，并在每次复用前取得人工确认。",
+  "version": "0.4.0",
+  "description": "基于 Codex 的 AI 时代软件开发协作：以生命周期理解情境，按需组织能力，放大人与 AI 的价值。",
   "author": {
     "name": "Supermind 贡献者"
   },
@@ -18,12 +18,14 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Supermind",
-    "shortDescription": "发现通用能力，每次复用均由人确认",
-    "longDescription": "把产品想法变成可用软件，自动发现并评估候选能力。确认业务解耦程度和复用价值，每次复用或适配都由人明确授权。独立的本地 Python 命令行工具将能力库记录增量同步至 GitHub 私有仓库，通过分类分组的 README 表格和详情页直接浏览。模型与向量保留在本地，无需常驻服务。",
+    "shortDescription": "以情境组织软件开发，放大人与 AI 的价值",
+    "longDescription": "基于 Codex 实践 AI 时代的软件开发哲学。以软件生命周期为共同坐标，结合当前情境与相关材料开展人机协作，不固定所有场景与工作流程。核心能力包括响应复用要求、评估复用、发现值得抽象的成果；沉淀和每次具体复用均需人工确认。通过独立本地 Python 工具管理能力库并增量同步至 GitHub 私有仓库，模型与向量保留在本地，无需常驻服务。",
     "developerName": "Supermind 贡献者",
     "category": "Developer Tools",
     "capabilities": [
-      "产品意图理解",
+      "生命周期与情境理解",
+      "人机协作范式",
+      "复用评估与候选发现",
       "人工确认的能力复用",
       "有证据的决策",
       "能力库浏览",
