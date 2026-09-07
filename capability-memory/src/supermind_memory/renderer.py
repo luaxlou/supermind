@@ -445,7 +445,8 @@ def _source_description(item: Capability) -> str:
     source = urlsplit(item.source_uri)
     if source.scheme in {"https", "http"} and source.hostname and not source.username and not source.password:
         url = quote(item.source_uri, safe=":/?=&%#-._~")
-        return f"[官方项目]({url})"
+        label = "模板文档" if item.artifact_type.value == "template" else "官方项目"
+        return f"[{label}]({url})"
     return f"{kind}（{escape_markdown(item.owner)}）"
 
 

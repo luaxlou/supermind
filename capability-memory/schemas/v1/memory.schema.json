@@ -3,13 +3,53 @@
   "title": "Supermind Memory Marker v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["format", "event_schema_versions", "renderer_version", "repository_id", "default_branch"],
+  "required": [
+    "format",
+    "event_schema_versions",
+    "renderer_version",
+    "repository_id",
+    "default_branch"
+  ],
   "properties": {
-    "history_epoch": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "format": {"type": "integer", "const": 1},
-    "event_schema_versions": {"type": "array", "const": [1], "items": {"type": "integer", "const": 1}},
-    "renderer_version": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^\\S(?:.*\\S)?$"},
-    "repository_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^\\S(?:.*\\S)?$"},
-    "default_branch": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^\\S+$"}
+    "history_epoch": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "format": {
+      "type": "integer",
+      "const": 1
+    },
+    "event_schema_versions": {
+      "type": "array",
+      "const": [
+        1
+      ],
+      "items": {
+        "type": "integer",
+        "const": 1
+      }
+    },
+    "renderer_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^\\S(?:.*\\S)?$"
+    },
+    "repository_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^\\S(?:.*\\S)?$"
+    },
+    "default_branch": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^\\S+$"
+    },
+    "privacy_policy": {
+      "type": "string",
+      "const": "portable-context-v1"
+    }
   }
 }

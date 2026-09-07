@@ -362,6 +362,15 @@ def _parser() -> _ArgumentParser:
     audit = commands.add_parser("audit", help="Read-only capability quality and source audit")
     audit.add_argument("--capability-id")
     _add_format(audit)
+    for name in ("privacy-audit", "purge-sensitive"):
+        privacy_command = commands.add_parser(name)
+        if name == "privacy-audit":
+            privacy_command.add_argument("--git-history", action="store_true")
+        if name == "purge-sensitive":
+            privacy_command.add_argument("--confirm", action="store_true")
+            privacy_command.add_argument("--expected-digest")
+            privacy_command.add_argument("--expected-head")
+        _add_format(privacy_command)
     purge = commands.add_parser("purge", help="Permanently clear exact capabilities, dependants and Git history")
     purge.add_argument("--capability-id", action="append", required=True)
     purge.add_argument("--confirm", action="store_true")
@@ -440,6 +449,12 @@ def _dispatch(
     data_home: Path | None,
 ) -> tuple[object, str | None]:
     command = arguments.command
+    if command == "privacy-audit":
+        from supermind_memory.privacy import audit_privacy
+        return audit_privacy(memory.sync_coordinator, git_history=arguments.git_history), None
+    if command == "purge-sensitive":
+        return memory.sync_coordinator.purge((), privacy=True, confirm=arguments.confirm,
+            expected_digest=arguments.expected_digest, expected_head=arguments.expected_head), None
     if command == "audit":
         return memory.audit(arguments.capability_id), None
     if command == "init":

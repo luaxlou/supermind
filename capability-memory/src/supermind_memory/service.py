@@ -1090,6 +1090,10 @@ class CapabilityMemory:
             sources_scanned=tuple(redact_uri(source) for source in discovered.sources_scanned),
         )
         if self.sync_coordinator is not None:
+            if getattr(self.sync_coordinator, "privacy_policy", None):
+                # Raw local observations may inform the current task but never enter
+                # shared authority. Registration requires a separately reviewed asset.
+                return replace(discovered, local_only=True)
             return self._persist_discovery_events(discovered, context, metadata)
         documents = tuple(
             str(

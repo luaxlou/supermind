@@ -108,14 +108,18 @@ class SyncCoordinator:
         self.store = EventStore(paths.checkout)
         self._operation_lock = paths.locks / "sync.lock"
 
+    @property
+    def privacy_policy(self) -> str | None:
+        return MemoryMarker.from_bytes((self.paths.checkout / "memory.json").read_bytes()).privacy_policy
+
     def mutate(self, create_event: Callable[[ReplayResult], AuthorityEvent]) -> SyncReport:
         return self.mutate_batch(lambda current: (create_event(current),))
 
     def purge(self, identifiers: tuple[str, ...], *, confirm: bool = False,
-              expected_digest: str | None = None, expected_head: str | None = None) -> dict:
+              expected_digest: str | None = None, expected_head: str | None = None, privacy: bool = False) -> dict:
         from supermind_memory.purge import execute_purge
         return execute_purge(self, identifiers, confirm=confirm,
-                             expected_digest=expected_digest, expected_head=expected_head)
+                             expected_digest=expected_digest, expected_head=expected_head, privacy=privacy)
 
     def mutate_batch(
         self,
@@ -375,6 +379,8 @@ class SyncCoordinator:
         ):
             raise SyncBlocked("repository_marker_mismatch")
         local_marker = MemoryMarker.from_bytes((self.paths.checkout / "memory.json").read_bytes())
+        if marker.privacy_policy != local_marker.privacy_policy:
+            raise SyncBlocked("privacy_policy_mismatch")
         if marker.history_epoch != local_marker.history_epoch:
             raise SyncBlocked("history_epoch_mismatch", ("Reinitialize this stale device from the current repository",))
         local = self.git.tree_entries(self.paths.checkout, "HEAD", "events")
@@ -480,6 +486,11 @@ class SyncCoordinator:
         remote_head: str,
         message: str,
     ) -> str:
+        marker = MemoryMarker.from_bytes((self.paths.checkout / "memory.json").read_bytes())
+        if marker.privacy_policy:
+            from supermind_memory.privacy import assert_portable
+            assert_portable(additions)
+            assert_portable(tuple(result.entities.values()))
         self._preflight_projection(result)
         render_changes = self._stage_render(result, additions)
         self._validate_owned_paths()

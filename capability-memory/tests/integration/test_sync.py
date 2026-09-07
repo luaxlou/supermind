@@ -321,6 +321,62 @@ def test_purge_preserves_user_note_inside_catalog(devices):
     assert note.read_text() == "Do not delete"
 
 
+def test_privacy_cleanup_preserves_clean_asset_blocks_private_writes_and_old_device(devices):
+    from supermind_memory.privacy import audit_privacy
+    bare, source, a, b = devices
+    dirty = _capability_event('method', device='a', source=source,
+                              summary='file:' + '///tmp/private-design.md')
+    a.mutate(dirty)
+    payload = dirty.to_document()['payload']
+    payload.update(summary='Portable design method', source_uri='https://example.org/method',
+                   contract='Read this self-contained method and configure your own project.')
+    clean = AuthorityEvent.create(event_id='a-method-clean', device_id='device-a',
+        entity_type='capability', entity_id='method', operation='updated',
+        parent_event_ids=(dirty.event_id,), occurred_at='2026-09-07T00:00:00Z', payload=payload)
+    a.mutate(clean)
+    b.sync()
+    preview = a.coordinator.purge((), privacy=True)
+    assert not preview['removed']
+    result = a.coordinator.purge((), privacy=True, confirm=True,
+        expected_digest=preview['event_set_digest'], expected_head=preview['remote_head'])
+    assert result['applied']
+    assert _run_git('rev-list', '--count', '--all', cwd=a.paths.checkout).strip() == b'1'
+    assert set(a.replay().entities) == {('capability', 'method')}
+    scan = audit_privacy(a.coordinator, git_history=True)
+    assert not scan['historical_event_findings']
+    assert scan['affected_local_blob_count'] == 0
+    assert scan['local_commit_count'] == 1
+    before = a.coordinator.git.head(a.paths.checkout)
+    for online in (True, False):
+        a.runner.online = online
+        leaking = AuthorityEvent.create(event_id='leak-' + str(online), device_id='device-a',
+            entity_type='metadata', entity_id='private-origin', operation='set', parent_event_ids=(),
+            occurred_at='2026-09-07T00:01:00Z', payload={'value': 'codex:' + '//threads/private'})
+        with pytest.raises(SyncBlocked, match='private_context_rejected'):
+            a.mutate(leaking)
+        assert a.coordinator.git.head(a.paths.checkout) == before
+        assert not a.coordinator.git.status(a.paths.checkout)
+    with pytest.raises(SyncBlocked, match='privacy_policy_mismatch|history_epoch_mismatch'):
+        b.sync()
+    assert _run_git('rev-list', '--count', 'main', cwd=bare).strip() == b'1'
+
+
+def test_privacy_cleanup_rejects_stale_preview_and_push_failure(devices):
+    _, source, a, _ = devices
+    a.mutate(_capability_event('private', device='a', source=source,
+                             summary='codex:' + '//threads/private'))
+    preview = a.coordinator.purge((), privacy=True)
+    with pytest.raises(SyncBlocked, match='purge_preview_stale'):
+        a.coordinator.purge((), privacy=True, confirm=True,
+            expected_digest='stale', expected_head=preview['remote_head'])
+    a.runner.reject_pushes = True
+    with pytest.raises(SyncBlocked, match='purge_push_rejected'):
+        a.coordinator.purge((), privacy=True, confirm=True,
+            expected_digest=preview['event_set_digest'], expected_head=preview['remote_head'])
+    assert a.coordinator.git.head(a.paths.checkout) == preview['remote_head']
+    assert a.repository.get_capability('private') is not None
+
+
 def test_service_reuse_blocks_stale_payload_after_remote_reconciliation(devices):
     _, source, device_a, device_b = devices
     original = _capability_event("login", device="a", source=source)
@@ -1094,3 +1150,24 @@ def test_local_sibling_event_is_stored_as_conflict_but_not_pushed_as_success(dev
         "--git-dir", str(bare), "ls-tree", "-r", "--name-only", "main", "--", "events",
     ).decode().splitlines()
     assert all("stale-sibling.json" not in path for path in remote_paths)
+
+
+def test_privacy_mode_discovery_is_local_only_and_does_not_repollute(devices):
+    from supermind_memory.types import DiscoveryContext, DiscoveryResult
+    _, source, a, _ = devices
+    preview = a.coordinator.purge((), privacy=True)
+    a.coordinator.purge((), privacy=True, confirm=True,
+        expected_digest=preview['event_set_digest'], expected_head=preview['remote_head'])
+    before = a.coordinator.git.head(a.paths.checkout)
+    memory = CapabilityMemory(
+        bootstrap=SimpleNamespace(),
+        discovery=SimpleNamespace(discover=lambda context: DiscoveryResult((_capability('local', source),), (str(source),))),
+        repository=a.repository, search_engine=SimpleNamespace(), embedding_provider=a.coordinator.embeddings,
+        health_manager=SimpleNamespace(ensure_healthy=lambda: HealthReport(True, 'test', (), '2026-09-07T00:00:00Z')),
+        codex_home=a.paths.root.parent.parent, sync_coordinator=a.coordinator)
+    result = memory.discover(DiscoveryContext(source.parent, a.paths.root.parent.parent))
+    assert result.local_only
+    assert result.capabilities[0].id == 'local'
+    assert a.repository.get_capability('local') is None
+    assert a.coordinator.git.head(a.paths.checkout) == before
+    assert not a.coordinator.git.status(a.paths.checkout)

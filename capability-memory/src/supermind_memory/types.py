@@ -243,6 +243,7 @@ class DiscoveryContext:
 class DiscoveryResult:
     capabilities: tuple[Capability, ...]
     sources_scanned: tuple[str, ...]
+    local_only: bool = False
 
 
 @dataclass(frozen=True)

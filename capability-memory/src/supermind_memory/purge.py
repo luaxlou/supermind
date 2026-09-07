@@ -65,7 +65,7 @@ def plan_purge(events: Sequence[AuthorityEvent], identifiers: tuple[str, ...]) -
     return PurgePlan(current.digest, tuple(sorted(removed)), retained)
 
 
-def execute_purge(coordinator, identifiers, *, confirm=False, expected_digest=None, expected_head=None):
+def execute_purge(coordinator, identifiers, *, confirm=False, expected_digest=None, expected_head=None, privacy=False):
     """Publish a clean baseline with an exact remote lease; never union old history."""
     from dataclasses import replace
     from supermind_memory.event_model import MemoryMarker
@@ -88,13 +88,17 @@ def execute_purge(coordinator, identifiers, *, confirm=False, expected_digest=No
         remote = c.git.ref_head(c.paths.checkout, f"refs/remotes/origin/{c.config.branch}")
         if remote != c.git.head(c.paths.checkout):
             raise SyncBlocked("purge_requires_synchronized_checkout")
-        plan = plan_purge(c.store.load_all(), identifiers)
+        if privacy:
+            from supermind_memory.privacy import plan_privacy_purge
+            plan = plan_privacy_purge(c.store.load_all())
+        else:
+            plan = plan_purge(c.store.load_all(), identifiers)
         cache_paths = (c.paths.generations, c.paths.root / "migration-stage")
         active_pointer = c.paths.root / "active-generation.json"
         for path in (*cache_paths, active_pointer):
             if path.is_symlink():
                 raise SyncBlocked("purge_cache_path_unsafe")
-        result = {"applied": False, "event_set_digest": plan.digest, "remote_head": remote,
+        result = {"applied": False, "privacy_cleanup": privacy, "event_set_digest": plan.digest, "remote_head": remote,
                   "removed": [f"{kind}/{key}" for kind, key in plan.removed],
                   "retained_capabilities": [e.entity_id for e in plan.events if e.entity_type == "capability"],
                   "local_history_paths": [str(path) for path in cache_paths if path.exists()],
@@ -124,7 +128,7 @@ def execute_purge(coordinator, identifiers, *, confirm=False, expected_digest=No
             baseline = replay(plan.events)
             marker = MemoryMarker.from_bytes((c.paths.checkout / "memory.json").read_bytes())
             epoch = hashlib.sha256((remote + baseline.digest).encode()).hexdigest()
-            (stage / "memory.json").write_bytes(replace(marker, history_epoch=epoch).to_bytes())
+            (stage / "memory.json").write_bytes(replace(marker, history_epoch=epoch, privacy_policy="portable-context-v1" if privacy else marker.privacy_policy).to_bytes())
             store = EventStore(stage)
             for event in plan.events:
                 store.append(event)

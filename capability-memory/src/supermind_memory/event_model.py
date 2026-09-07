@@ -80,6 +80,7 @@ class MemoryMarker:
     repository_id: str
     default_branch: str
     history_epoch: str | None = None
+    privacy_policy: str | None = None
 
     def __post_init__(self) -> None:
         versions = tuple(self.event_schema_versions)
@@ -107,6 +108,7 @@ class MemoryMarker:
             document["repository_id"],
             document["default_branch"],
             document.get("history_epoch"),
+            document.get("privacy_policy"),
         )
 
     def to_document(self) -> dict[str, object]:
@@ -117,6 +119,7 @@ class MemoryMarker:
             "renderer_version": self.renderer_version,
             "repository_id": self.repository_id,
             **({"history_epoch": self.history_epoch} if self.history_epoch is not None else {}),
+            **({"privacy_policy": self.privacy_policy} if self.privacy_policy is not None else {}),
         }
 
     def to_bytes(self) -> bytes:
@@ -302,7 +305,9 @@ def _validate_event_document(document: Mapping[str, object], *, verify_hash: boo
 
 
 def _validate_marker_document(document: Mapping[str, object]) -> None:
-    _require_exact_keys(document, _MARKER_FIELDS | ({"history_epoch"} if "history_epoch" in document else set()), "memory marker")
+    _require_exact_keys(document, _MARKER_FIELDS | (set(document) & {"history_epoch", "privacy_policy"}), "memory marker")
+    if "privacy_policy" in document and document["privacy_policy"] != "portable-context-v1":
+        raise EventValidationError("unsupported privacy policy")
     if "history_epoch" in document and (not isinstance(document["history_epoch"], str)
                                        or not _HASH.fullmatch(document["history_epoch"])):
         raise EventValidationError("invalid history epoch")

@@ -1,6 +1,6 @@
 {
   "name": "supermind",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "基于生命周期与具体场景作出软件开发决策，明确触发能力检索，并依据执行反馈组织人机协作。",
   "author": {
     "name": "Supermind 贡献者"

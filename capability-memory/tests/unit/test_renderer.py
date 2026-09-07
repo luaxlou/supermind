@@ -214,3 +214,11 @@ def test_detail_preserves_links_lists_and_code_without_turning_code_comments_int
     assert "\n1. 安装客户端。\n" in page
     assert "```sh\n# 保留代码注释\nnova start\n```" in page
     assert "<script>" not in page
+
+
+def test_template_source_is_named_as_document_not_official_project():
+    item = replace(_capability("method", "Method", Lifecycle.CANDIDATE),
+                   artifact_type=ArtifactType.TEMPLATE, source_uri="https://example.org/method.md")
+    detail = render_files(replay((_event(item, "template-source"),)))[PurePosixPath("capabilities/method.md")].decode()
+    assert "[模板文档](https://example.org/method.md)" in detail
+    assert "[官方项目]" not in detail

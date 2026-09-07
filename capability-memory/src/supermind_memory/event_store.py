@@ -47,6 +47,15 @@ class EventStore:
 
         root_fd = self._open_root()
         try:
+            try:
+                marker_raw = _read_file_at(root_fd, "memory.json")
+            except FileNotFoundError:
+                marker_raw = None
+            if marker_raw is not None:
+                from supermind_memory.event_model import MemoryMarker
+                if MemoryMarker.from_bytes(marker_raw).privacy_policy:
+                    from supermind_memory.privacy import assert_portable
+                    assert_portable((event,))
             parent_fd = _open_directory_chain(root_fd, relative.parts[:-1], create=True)
             try:
                 self._append_at(parent_fd, relative.name, raw, target)

@@ -58,6 +58,7 @@ capability-memory/src/supermind_memory/migration.py
 capability-memory/src/supermind_memory/projection.py
 capability-memory/src/supermind_memory/protocol.py
 capability-memory/src/supermind_memory/purge.py
+capability-memory/src/supermind_memory/privacy.py
 capability-memory/src/supermind_memory/quality.py
 capability-memory/src/supermind_memory/redaction.py
 capability-memory/src/supermind_memory/renderer.py
@@ -95,6 +96,7 @@ capability-memory/tests/unit/test_event_model.py
 capability-memory/tests/unit/test_event_store.py
 capability-memory/tests/unit/test_git_client.py
 capability-memory/tests/unit/test_purge.py
+capability-memory/tests/unit/test_privacy.py
 capability-memory/tests/unit/test_quality.py
 capability-memory/tests/unit/test_redaction.py
 capability-memory/tests/unit/test_renderer.py
@@ -105,7 +107,10 @@ capability-memory/uv.lock
 docs/product/2026-09-04-capability-memory-design.md
 docs/product/2026-09-06-capability-memory-hardening-design.md
 docs/product/2026-09-06-distributed-capability-memory-design.md
+docs/product/2026-09-07-core-decision-mechanism-design.md
 docs/product/capability-memory-purge.md
+docs/product/2026-09-07-reuse-meta-capability-review.md
+docs/engineering/wireframe-design-baseline.md
 docs/product/capability-memory-bootstrap.md
 docs/product/green-planet-login-boundary.md
 docs/product/supermind-decision-model.md
@@ -122,12 +127,15 @@ plugins/supermind/skills/supermind/SKILL.md
 plugins/supermind/skills/supermind/agents/openai.yaml
 plugins/supermind/skills/supermind/references/actions.md
 plugins/supermind/skills/supermind/references/capability-routing.md
+plugins/supermind/skills/supermind/references/core-decision.md
+plugins/supermind/skills/supermind/references/scenarios.md
 plugins/supermind/skills/supermind/references/product-state.md
 plugins/supermind/tests/test_launcher.py
 plugins/supermind/tool.lock.json
 plugins/supermind/vendor/supermind_capability_memory-0.3.7-py3-none-any.whl
 plugins/supermind/vendor/supermind_capability_memory-0.3.12-py3-none-any.whl
 plugins/supermind/vendor/supermind_capability_memory-0.3.13-py3-none-any.whl
+plugins/supermind/vendor/supermind_capability_memory-0.3.14-py3-none-any.whl
 scripts/verify-distribution.py
 scripts/verify.sh'
 
