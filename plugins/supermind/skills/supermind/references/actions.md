@@ -1,25 +1,16 @@
-# Actions
+# 行动类型
 
-Actions are internal decisions, not commands the user must choose.
+行动类型用于内部决策，不是需要用户选择的命令。
 
-- **Create**: No usable product baseline exists. Establish the smallest valuable end-to-end use case,
-  make it work, and use it as the first product baseline.
-- **Add**: Introduce a new user-visible capability. Connect it to existing scenarios and features;
-  add a new end-to-end scenario only when the capability creates one.
-- **Change**: Move intended behavior from A to B. Update every affected scenario, feature contract,
-  implementation, and verification result. B becomes the new baseline.
-- **Fix**: Restore behavior that does not match the existing intent or contract. Do not redefine the
-  product merely to match the defect.
-- **Improve**: Make a measurable quality better while preserving intended behavior—for example speed,
-  usability, reliability, accessibility, or maintainability.
-- **Refactor**: Change internal structure while preserving externally observable behavior and contracts.
-- **Release**: Turn completed product changes into an identifiable, verified delivery.
-- **Reuse**: Reuse an existing capability or extract a proven capability whose contract, ownership,
-  version, and consumers can stand apart from one product.
+- **创建**：没有可用的产品基线时，建立最小且有价值的完整使用场景，使其可用，作为初始产品基线。
+- **新增**：增加用户可见的能力，与已有场景和功能衔接；只有确实产生新场景时才补充完整场景。
+- **调整**：将既有行为从原状态改为目标状态，同步更新受影响的场景、契约、实现和验证结果，以新状态为基线。
+- **修复**：恢复与既有意图或契约不符的行为，不能为了迁就缺陷而重新定义产品。
+- **改善**：在保留既有含义和契约的前提下，提高速度、易用性、可靠性、可访问性或可维护性等可衡量质量。
+- **重构**：改变内部结构，但保留外部可观察的行为和契约。
+- **发布**：将已完成的产品变更转为有版本标识、经过验证的交付。
+- **复用**：使用已有能力，或提取经过验证、能够独立定义契约、责任人、版本和使用方的能力。
 
-Migration is not a standalone action. Treat it as implementation work attached to Create, Add,
-Change, Improve, Refactor, Release, or Reuse.
+迁移不是单独的行动类型，应作为上述相应行动中的实现工作。
 
-One request may require several actions. Select only the next action that advances the outcome, then
-reassess after its result.
-
+一次请求可能涉及多个行动。每次只选择当前最能推进目标的行动，获得结果后再评估下一步。

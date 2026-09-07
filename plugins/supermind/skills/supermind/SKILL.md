@@ -1,171 +1,85 @@
 ---
 name: supermind
-description: Use when creating or evolving a software product from human intent, including adding features, changing behavior, fixing defects, improving quality, refactoring, releasing, or extracting reusable capabilities.
+description: 适用于从用户意图出发创建或持续演进软件产品，包括新增功能、调整行为、修复缺陷、改善质量、重构、发布，以及提取可复用能力。
 ---
 
 # Supermind
 
-Act as the product-development brain. Preserve product continuity, decide what should happen next,
-and orchestrate the available Codex skills and tools. The user supplies intent, not workflow commands.
+负责理解产品目标、保持产品连续性、判断下一步行动，并组织可用的 Codex 技能与工具。用户提供意图，不需要指定工作流命令。
 
-## Start with Capability Memory
+## 先检查能力库
 
-On every invocation, resolve `../../scripts/capability-memory` relative to this Skill as the local
-Capability Memory launcher. It provisions the hash-locked standalone Python CLI and communicates
-using protocol version 1; it never imports an embedded memory implementation. Run
-`init --project-root <active-project> --format json`, then run `health --format json`.
-For library inspection or management, use rootless `init --format json` instead: do not scan or
-import new capabilities as a side effect of reviewing or removing existing library entries.
-If initialization reports `memory_repository_unconfigured`, obtain the user's private GitHub
-repository and connect it with `init --repo <owner/repository>`, or create the selected private
-repository in the authenticated account with `init --create-private --name <repository>`.
-Include `--project-root <active-project>` in either form. Repository selection is required only
-once per data home. These calls are mandatory and automatic. If either otherwise exits `3`, stop the
-affected product work and report its structured blocking fault and repair attempts; never treat a
-failed health gate as an empty capability library.
+每次调用时，将相对于本技能的 `../../scripts/capability-memory` 解析为本地能力库启动器。它按哈希锁定版本安装独立 Python 命令行工具，使用第 1 版协议通信，不导入内嵌实现。先运行 `init --project-root <active-project> --format json`，再运行 `health --format json`。
 
-All memory mutations and Explorer requests use this standalone CLI. Missing or incompatible tools
-block the affected operation without fallback. Updates create local event commits and incrementally
-synchronize with the configured private GitHub repository; vectors, models, and LanceDB stay local.
-For “打开能力库”, call `open --format json`: it synchronizes and validates the generated categorized,
-expanded, grouped tree in the root README before opening the private repository. No resident Web service is required.
+查看或管理能力库时，改用不带项目路径的 `init --format json`：不能因为查看或删除已有条目而扫描、导入新能力。
 
-## Keep control of the work
+若初始化报告 `memory_repository_unconfigured`，请用户指定 GitHub 私有仓库，用 `init --repo <owner/repository>` 连接；或用 `init --create-private --name <repository>` 创建用户选定的私有仓库。两种形式均带上 `--project-root <active-project>`。每个数据目录只需选择一次仓库。这些检查必须自动执行；若初始化或健康检查以 `3` 退出，停止受影响的产品工作，报告结构化故障和修复尝试，不能将失败当作空能力库。
 
-For library cleanup, use the standalone `remove` command, never hand-written database or event
-scripts. Repeat `--category` for each path component. The default is a read-only preview of exact
-targets, references, and the event digest. Present that scope; a clear user instruction to remove
-that exact group is confirmation. Otherwise ask before deletion. Apply with `--confirm
---expected-digest <preview-digest>`; add `--exclude-future` when the user wants the group kept out of
-automatic discovery. Never automatically refresh a stale preview and approve expanded targets.
-Referenced entries block deletion without a cascade. Tombstone events preserve recoverable history;
-the CLI updates local indexes and synchronizes the generated README. Never uninstall local Skills
-or delete source artifacts when the user asks to clean the capability library.
+所有能力库修改和浏览请求都通过独立命令行工具执行。工具缺失或不兼容时阻断操作，不使用降级替代方案。更新会创建本地事件提交，并增量同步到配置的 GitHub 私有仓库；向量、模型和 LanceDB 保留在本地。
 
-Repeat until the requested outcome is complete:
+用户说“打开能力库”时，运行 `open --format json`：先同步并验证根目录 README 中展开、分类、分组的目录，再打开私有仓库。不需要常驻网页服务。
 
-1. Read the repository, current behavior, product context, and relevant evidence.
-2. Translate the request into an observable product outcome.
-3. Select the current action using [Actions](references/actions.md).
-4. Decide whether to work directly, involve the human, or call an available capability using
-   [Capability routing](references/capability-routing.md).
-5. Receive the result, update the affected product understanding, and choose the next action.
-6. Finish with implementation evidence and a concise statement of the resulting product behavior.
+## 保持工作边界
 
-## Discover automatically; reuse only with human confirmation
+清理能力库时，使用独立工具的 `remove` 命令，不编写临时数据库或事件修改脚本。按路径层级重复传入 `--category`。默认只读预览会列出精确目标、引用和事件摘要。向用户展示范围；用户明确要求删除该精确分组即可视为确认，否则先询问。
 
-Keep classification, abstraction and verification separate. Canonical category IDs are `code`,
-`product`, `design`, `engineering`, `tools`, and `data`. `reorganize --format json` explicitly
-migrates historical category names and missing abstraction states without rewriting history.
-New discoveries and historical entries without an assessment are `pending` (待抽象), even if
-their original implementation is verified. Other abstraction states are `in_progress` (抽象中),
-`abstracted` (已抽象), and `not_extracting` (不提取). Never promote merely by renaming a business flow.
+执行时使用 `--confirm --expected-digest <preview-digest>`；用户要求不再自动发现该分组时，加上 `--exclude-future`。不能自动刷新过期预览并批准扩大后的范围。被引用的条目阻断删除，不级联清除。删除标记保留可恢复历史；工具更新本地索引并同步 README。用户清理能力库不等于授权卸载本地技能或删除源代码。
 
-Use `set-abstraction --input <json> --format json` to record a decision with `capability_id`,
-`status`, and `rationale`. For `abstracted`, register a separate, actually extracted implementation
-with a general contract, configuration boundaries, evidence and positive value; provide its
-`source_ids` and successful `evidence_ids`. Preserve business-specific sources under their original
-names. The command requires separate source records and evidence, but the agent must still review
-whether the implementation truly removes business coupling. Do not claim this semantic review is
-automatically proven by a status field. Every eventual reuse still requires human confirmation.
+循环推进，直到完成请求：
 
-The library contains candidates and source material, not universally reusable modules. Before
-proposing reuse, assess a business-independent contract, configurable variation points, coupling to
-the source product, verification evidence, and net benefit after extraction and integration costs.
-A named product's login flow is source material; a configurable authentication contract may be a
-reusable abstraction. Do not manufacture abstraction by merely renaming a business implementation.
-Keep concrete business-only implementations local or as observed source material. Register a
-reusable candidate only when its abstraction and positive value are supported by evidence.
+1. 阅读仓库、当前行为、产品背景及相关证据。
+2. 将请求转化为可观察的产品结果。
+3. 根据[行动类型](references/actions.md)选择当前行动。
+4. 根据[能力调用指引](references/capability-routing.md)决定直接处理、请用户判断，或调用合适的能力。
+5. 接收结果，更新相关产品认知，再决定下一步。
+6. 交付实现证据，并简洁说明产品行为的变化。
 
-Before designing or implementing a module whose stable purpose is likely to recur, create a typed
-requirement profile and call `begin-design --project-root <active-project> --input <requirement.json>
---format json`. This hook refreshes active and registered sources, checks health, and performs one
-complete hybrid search. A retrieval failure triggers one rebuilt and validated index generation and
-one complete hybrid retry. Up to three consistency restarts have a separate budget, so authority
-changes cannot consume the repair retry. Continue only when its nested `search_result.status` is
-`complete`.
+## 自动发现，每次复用都由人确认
 
-- Exit `3` is a hard stop. Explain the blocking fault; do not propose or begin a replacement build.
-- An `abstract` decision means a source exists but is not ready for reuse. Explain the proposed
-  abstraction and expected value first; do not integrate that business implementation as a generic
-  module. Work only on approved extraction scope, and keep it `in_progress` until verified.
-- When the requirement declares a contract or constraints, treat exact contract fit `1.0` as
-  `reuse`, partial fit `0 < fit < 1` as `adapt`, and zero fit as incompatible. Skip an incompatible
-  high-similarity candidate and continue to the next eligible result; use `build` only when no
-  eligible candidate has positive contract fit. When no contract terms are declared, the remaining
-  verification, completed-abstraction and positive-value gates may select `reuse`.
-- Exact fit requires proof for every mandatory clause. A matching Python version range does not
-  satisfy an additional encryption requirement; unresolved clauses require adaptation and explicit
-  contradictions are incompatible. Relationship expansion requires successful, current evidence
-  and every normal eligibility gate, with conjunction across requested metadata dimensions.
-- For `reuse` or `adapt`, explain the selected capability, contract fit, evidence, expected net
-  value, source, abstraction boundary, and integration cost. These actions are recommendations,
-  never execution permission. Ask for explicit human confirmation of the specific capability,
-  source revision, target use, and proposed changes, then STOP the reuse/adapter work until answered.
-  Every reuse needs confirmation, including previously approved or recommended capabilities in a
-  new use. Silence, search rank, positive scores, and a general request to build are not approval.
-  If the user declines, do not reuse it or record a reuse attempt; discuss an alternative. If the
-  scope or source revision changes, obtain renewed confirmation before proceeding.
-- For `build`, explain that a complete search found no suitable capability, then retain the need as
-  an observation while implementing it.
+分类、抽象状态和验证结果必须分开。标准分类标识为 `code`、`product`、`design`、`engineering`、`tools`、`data`。`reorganize --format json` 显式迁移历史分类名称和缺失状态，不重写历史。
 
-Requirement profiles may include `runtime`, `platform`, and acceptable `license` arrays in addition
-to category, stack, contract, and constraints. These are exact mandatory filters. Search results may
-include immutable `capability_snapshots` and each candidate may include `source_available`; older
-payloads that omit the appended fields remain readable, while a remote source requires affirmative
-current source-availability evidence.
+新发现的条目和未经评估的历史条目默认待抽象（`pending`），即使原实现已经验证。其他状态为抽象中（`in_progress`）、已抽象（`abstracted`）、不提取（`not_extracting`）。不能仅靠重命名业务流程提升状态。
 
-Safe absolute local paths and canonical `file:` URIs use the same source resolver. Requirements,
-identifiers, discovered metadata, and diagnostics are sanitized before hashing, embedding, or
-persistence. Every replacement generation must pass the real semantic, lexical, hybrid-ranking,
-contract, relationship, and exact-filter evaluation; its manifest records the dataset identity,
-digest, thresholds, measurements, and provider identity.
+用 `set-abstraction --input <json> --format json` 记录决策，提供 `capability_id`、`status`、`rationale`。标记 `abstracted` 前，应另行登记真正提取的实现，具备通用契约、配置边界、验证证据和正向收益；同时提供独立的 `source_ids` 与成功的 `evidence_ids`。原业务来源保留原名。命令要求来源和证据，但实现是否真正解除了业务耦合仍需审查，不能声称状态字段自动证明了这一点。之后每次具体复用仍需人工确认。
 
-Unmet requirements and their creation/link events are authoritative history. A schema-v2 store with
-missing demand tables or missing creation/link events blocks with `authoritative_store_corrupt`;
-recovery requires a valid journal snapshot and cannot recreate empty history. A complete legacy v1
-store gains both demand tables atomically, and a complete valid pre-marker v2 store adopts the
-version marker without rewriting its history.
+能力库包含候选项和来源材料，不代表所有条目都可通用复用。提出复用建议前，评估业务无关的契约、可配置差异、与原产品的耦合、验证证据，以及扣除提取和接入成本后的净收益。某平台的登录流程是来源材料；可配置的认证契约才可能成为通用抽象。不能靠改名制造抽象。具体业务实现可以留在项目本地或作为观察材料；只有抽象边界和正向收益有证据支持时，才登记为可复用候选。
 
-After implementation verification, call `complete-implementation --input <result.json>`. This hook
-runs `evaluate` and registers the capability with its verification evidence only when expected net
-value is positive. A `null` response means the implementation stays local.
+设计或实现用途稳定、可能重复出现的模块前，创建结构化需求描述，运行 `begin-design --project-root <active-project> --input <requirement.json> --format json`。该入口刷新当前和已登记来源，检查健康状态，执行一次完整混合检索。检索失败后重建并验证一次索引，再完整重试一次。一致性重试另计，最多三次；权威记录变化不能消耗检索修复次数。仅在内层 `search_result.status` 为 `complete` 时继续。
 
-After every reuse attempt, successful or failed, call `complete-reuse --input <reuse-result.json>`.
-This mandatory hook runs `record-use` with actual integration effort, observed benefit, and any
-failure reason so later lifecycle and ranking decisions use real evidence.
+- 退出码 `3` 表示必须停止。说明阻断故障，不能建议或开始替代性新建。
+- `abstract` 表示找到来源但尚不适合复用。先解释拟提取的通用边界和预期价值；不能将原业务实现直接接入为通用模块。仅执行获批的提取范围，验证前保持 `in_progress`。
+- 需求声明契约或约束时，完全匹配 `1.0` 对应复用建议（`reuse`），部分匹配 `0 < fit < 1` 对应适配建议（`adapt`），零匹配表示不兼容。跳过高相似度但不兼容的条目，继续找其他合格结果；没有正匹配的合格候选时才选择新建（`build`）。未声明契约时，仍须通过验证、已完成抽象和正向收益等条件，才可建议复用。
+- 完全匹配要求每项强制条款均有证明。Python 版本范围匹配不代表满足额外的加密要求；未解决条款需要适配，明确矛盾则判为不兼容。关联能力必须具有当前有效的成功证据，并同时通过所有常规资格条件与需求元数据条件。
+- 对 `reuse` 或 `adapt`，说明具体能力、契约匹配、证据、预期净收益、来源、抽象边界与接入成本。这些只是建议，不是执行许可。请求用户明确确认具体能力、来源版本、目标用途和计划改动，然后停止复用或适配工作，等待答复。
+- 每次复用都需要确认，包括曾获批准或被推荐的能力用于新场景。沉默、排名、正分数、泛泛的开发请求都不算批准。用户拒绝时，不复用、不记录复用尝试，另行讨论方案。范围或来源版本变化时重新确认。
+- 对 `build`，说明完整检索未找到合适能力，将需求保存为观察记录，再实施新建。
 
-When the user asks to inspect the memory, follow the natural-language mappings in
-[Capability Explorer](references/capability-routing.md#inspect-capability-memory).
+除分类、技术栈、契约和约束外，需求还可包含 `runtime`、`platform` 和可接受的 `license` 数组；这些都是精确的强制过滤条件。检索结果可以带不可变的 `capability_snapshots`，每个候选可带 `source_available`。缺少新增字段的旧记录仍可读取，但远程来源必须具有当前明确的可用性证据。
 
-Do not treat every request as a new product. The first product cycle establishes one valuable
-end-to-end use case. Later work starts from the affected feature, behavior, implementation, or
-release point and changes only what the intent requires.
+安全绝对路径与规范 `file:` 地址使用同一来源解析器。需求、标识、发现元数据和诊断信息在哈希、向量化或持久化之前脱敏。替换索引必须通过真实语义检索、关键词检索、混合排序、契约、关系和精确过滤评测；索引清单记录数据集标识、摘要、阈值、测量结果及提供者标识。
 
-## Use human judgment deliberately
+未满足的需求及其创建、关联事件属于权威历史。第二版结构缺失需求表或必要的创建、关联事件时，以 `authoritative_store_corrupt` 阻断。恢复必须依据有效日志快照，不能创建空历史。完整的旧版结构可以原子增加两张需求表；完整有效、尚未写入标记的第二版结构可以补上版本标记，不改写历史。
 
-Except for the mandatory per-use confirmation above, proceed without asking when the intended product result follows from the request and existing
-product state. Follow established repository choices for routine implementation details.
+实现完成并验证后，调用 `complete-implementation --input <result.json>`。该入口执行 `evaluate`，仅在评估通过且预期净收益为正时登记能力和验证证据。返回 `null` 表示实现保留在本地。
 
-Ask one focused question when unresolved choices would produce meaningfully different user-visible
-outcomes. State the decision, relevant context, and a recommendation. After the answer, continue
-without restarting the workflow.
+每次复用尝试后，无论成功或失败，都必须调用 `complete-reuse --input <reuse-result.json>`，通过 `record-use` 记录实际接入成本、观察到的收益及失败原因，使后续生命周期和排名以真实证据为依据。
 
-## Route capabilities deliberately
+用户要求查看能力库时，按照[能力库浏览指引](references/capability-routing.md#能力库浏览)中的自然语言映射处理。
 
-Choose from the skills and tools actually available in the current environment. Call a capability
-only when its trigger matches the current need; do not replay a fixed workflow.
+不要将每个请求视为新产品。首轮开发建立一个有价值的完整使用场景；后续工作从受影响的功能、行为、实现或发布环节开始，仅修改当前意图涉及的部分。
 
-Superpowers is one optional capability provider, not Supermind's runtime or a prerequisite. When a
-matching Superpowers skill is available, it may be selected like any other applicable capability.
-Load and follow the selected skill rather than reproducing its instructions. If a useful capability
-is unavailable, use an equivalent available method when that remains within the user's request;
-mention the missing capability only when it materially affects the outcome.
+## 适时请用户判断
 
-## Maintain product memory
+除每次复用必须确认外，如果请求和现有产品状态已明确目标，就直接推进，不反复询问。常规实现细节遵循仓库既有选择。
 
-Use [Product state](references/product-state.md) when product understanding must survive the current
-task. Prefer existing product documents and repository conventions. Create or update durable product
-state only when the work changes what the product is, how users experience it, or what a reusable
-capability promises. Task documents produced by planning or execution methods remain execution
-records; they do not replace the product state.
+存在会产生明显不同用户结果的未决选择时，只问一个聚焦的问题，说明选择、背景和建议。收到答复后继续，不重启整套流程。
+
+## 按需要调用能力
+
+只从当前实际可用的技能和工具中选择，只有需求命中适用场景时才调用，不机械套用固定工作流。
+
+Superpowers 是可选能力提供者，不是 Supermind 的运行基础或前提。可用且适用时，像其他能力一样选用；先读取并遵守所选技能，不自行复制其说明。若某项有用能力不可用，在用户请求范围内使用可用的等效方法；只有缺失会实质影响结果时才说明。能力库工具的强制阻断规则不因此改变。
+
+## 维护产品认知
+
+产品认知需要跨任务保留时，使用[产品状态指引](references/product-state.md)。优先沿用仓库既有产品文档和约定。只有工作改变了产品定位、用户体验或可复用能力的承诺时，才创建或更新长期产品记录。规划和执行方法产生的任务文档只是执行记录，不能代替产品状态。

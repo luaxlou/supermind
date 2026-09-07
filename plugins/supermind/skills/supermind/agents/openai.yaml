@@ -1,7 +1,7 @@
 interface:
   display_name: "Supermind"
-  short_description: "Autonomous product development from intent"
-  default_prompt: "Use $supermind to turn this product intent into working software."
+  short_description: "从产品想法到软件交付，发现通用能力并在每次复用前取得人工确认"
+  default_prompt: "用 $supermind 把这个产品想法实现为可用的软件。"
 
 policy:
   allow_implicit_invocation: true

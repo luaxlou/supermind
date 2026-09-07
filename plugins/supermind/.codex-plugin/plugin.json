@@ -1,9 +1,9 @@
 {
   "name": "supermind",
-  "version": "0.3.7",
-  "description": "Product development with automatic capability discovery and human-confirmed reuse.",
+  "version": "0.3.8",
+  "description": "从产品想法到软件交付，自动发现候选能力，并在每次复用前取得人工确认。",
   "author": {
-    "name": "Supermind contributors"
+    "name": "Supermind 贡献者"
   },
   "homepage": "https://github.com/luaxlou/supermind",
   "repository": "https://github.com/luaxlou/supermind",
@@ -18,23 +18,23 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Supermind",
-    "shortDescription": "Discover capabilities; confirm every reuse",
-    "longDescription": "Turn product intent into working software while automatically discovering capability candidates. Assess business-independent abstraction and value, then require human confirmation for every reuse or adaptation. A standalone local Python CLI synchronizes immutable memory events with your private GitHub repository. Browse the expanded categorized README tree and capability cards. Models and vectors stay local; no resident service is required.",
-    "developerName": "Supermind contributors",
+    "shortDescription": "发现通用能力，每次复用均由人确认",
+    "longDescription": "把产品想法变成可用软件，自动发现并评估候选能力。确认业务解耦程度和复用价值，每次复用或适配都由人明确授权。独立的本地 Python 命令行工具将能力库记录增量同步至 GitHub 私有仓库，通过分类分组的 README 表格和详情页直接浏览。模型与向量保留在本地，无需常驻服务。",
+    "developerName": "Supermind 贡献者",
     "category": "Developer Tools",
     "capabilities": [
-      "Product intent",
-      "Human-confirmed capability reuse",
-      "Evidence-backed decisions",
-      "Capability Explorer",
-      "Private repository memory sync",
-      "Adaptive execution"
+      "产品意图理解",
+      "人工确认的能力复用",
+      "有证据的决策",
+      "能力库浏览",
+      "私有仓库增量同步",
+      "按需组织开发工作"
     ],
     "defaultPrompt": [
-      "Use Supermind to build this product intent.",
-      "Use Supermind to add this feature.",
-      "Use Supermind to improve this product.",
-      "Use Supermind to show the capability library."
+      "用 Supermind 把这个产品想法实现出来。",
+      "用 Supermind 增加这个功能。",
+      "用 Supermind 改进这个产品。",
+      "用 Supermind 查看能力库。"
     ]
   }
 }

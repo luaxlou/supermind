@@ -1,104 +1,54 @@
-# Capability routing
+# 能力调用指引
 
-Supermind owns product direction and continuity. Skills and tools provide specialized task methods.
-Route from the current need and the capabilities actually available in the environment, rather than
-from the size or label of the request.
+Supermind 负责产品方向和连续性；技能与工具提供专业方法。依据当前需要和实际可用能力选择，不按请求大小或名称机械套用。
 
-## Route by need
+## 按需要选择
 
-- Use an applicable brainstorming method when product intent, feature boundaries, or competing
-  user-visible outcomes require a decision.
-- Use a planning method when the target behavior is clear and coordinated implementation steps must
-  be defined.
-- Use a systematic debugging method when observed behavior has an unknown cause.
-- Use an execution or delegation method when an approved plan is ready and the method fits the
-  environment.
-- Use review and verification methods before claiming that the requested result works.
-- Use an integration or delivery method when completed repository work needs handoff or release.
-- Use domain-specific skills and tools whenever their own triggers match the task.
+- 产品意图、功能边界或用户可见方案仍需选择时，使用适合的需求讨论方法。
+- 目标明确但需要协调多个实现步骤时，使用规划方法。
+- 既有行为出现原因不明的问题时，使用系统化调试方法。
+- 已有获批计划，且方法适合当前环境时，使用执行或委派方法。
+- 声称完成之前，使用审查和验证方法。
+- 完成的仓库工作需要交付或发布时，使用集成与交付方法。
+- 涉及专门领域时，使用命中其适用条件的领域技能与工具。
 
-Capabilities may come from Codex, Superpowers, another plugin, or the project itself. Prefer the most
-specific applicable capability and follow its instructions once selected.
+能力可以来自 Codex、Superpowers、其他插件或项目本身。优先选择最贴合需要的能力，选定后遵守其说明。
 
-## Inspect Capability Memory
+## 能力库浏览
 
-Use the local Capability Memory launcher's `inspect` command when the user asks to see, explain,
-filter, or map reusable capabilities. Return its Markdown directly and preserve source, evidence,
-economics, and lifecycle details.
+用户要求查看、解释、筛选能力或展示关系时，调用本地能力库启动器的 `inspect` 命令，直接返回其生成的文档，保留来源、证据、成本收益及生命周期信息。
 
-- “查看能力库”, “show the capability library”, or equivalent: `inspect --view overview --format
-  markdown`; use `--view table` when the user asks for catalog rows or filters.
-- “打开能力库”, “open the capability library”, or equivalent: `open --format json` synchronizes,
-  regenerates and validates the expanded, categorized README tree, then opens the private GitHub
-  repository. `render --format json` refreshes generated Markdown without opening the browser.
-- “清理某分组”: use `remove --category <root> --category <subgroup> --format json` to preview
-  exact members and references. Only after human authorization apply with `--confirm
-  --expected-digest <preview-digest>`. Add `--exclude-future` to prevent automatic re-import of
-  that category. This removes library entries, not installed Skills or source code. A stale preview
-  or referenced entry blocks deletion. Preserve history; never force-delete dependent records.
-- “修改能力名称或说明”: use `describe --input <json> --format json` with a `capabilities` array
-  of `{id, name, summary}` objects. Preserve the original meaning and scope; translation does not
-  turn a business-specific implementation into a generic abstraction. The command leaves contracts,
-  source identity and verification claims unchanged and synchronizes the generated Markdown.
-- “显示登录能力”, “show the login capability”, or equivalent: resolve the capability identifier
-  from the latest complete search or table view, then use `inspect --view detail --capability-id
-  <id> --format markdown`.
-- “画出能力关系”, “map capability relationships”, or equivalent: `inspect --view graph --format
-  markdown`, adding category, lifecycle, stack, or capability filters when requested.
-- A request to explain a reuse choice: `inspect --view decision --input <decision.json> --format
-  markdown`.
-- “Show unmet capability needs” or equivalent: `list-demands --format json`. After a verified
-  implementation satisfies one, use `link-demand --input <link.json> --format json`, where the
-  document contains exactly `observation_id` and `capability_id`.
+- “查看能力库”：`inspect --view overview --format markdown`；需要表格或筛选时使用 `--view table`。
+- “打开能力库”：`open --format json`，同步、生成并验证展开的分类 README，再打开私有仓库。`render --format json` 只刷新文档，不打开浏览器。
+- “清理某分组”：先用 `remove --category <root> --category <subgroup> --format json` 预览精确成员与引用。获得人工授权后，以 `--confirm --expected-digest <preview-digest>` 执行。需要避免再次自动导入时加 `--exclude-future`。这只清理库内条目，不卸载技能或删除源代码。预览过期或存在引用时阻断；保留历史，不强制删除依赖记录。
+- “修改能力名称或说明”：调用 `describe --input <json> --format json`，输入文档包含 `capabilities` 数组，每项为 `{id, name, summary}`。保留原含义和范围；翻译不能让业务实现变为通用抽象。命令不改变契约、来源标识或验证声明，并同步生成文档。
+- “显示登录能力”：从最新的完整检索或表格中确定标识，再调用 `inspect --view detail --capability-id <id> --format markdown`。
+- “画出能力关系”：`inspect --view graph --format markdown`，按需要增加分类、生命周期、技术栈或能力过滤条件。
+- “解释复用选择”：`inspect --view decision --input <decision.json> --format markdown`。
+- “查看未满足需求”：`list-demands --format json`。之后有经过验证的实现满足需求时，调用 `link-demand --input <link.json> --format json`，输入仅包含 `observation_id` 和 `capability_id`。
 
-`inspect` is read-only; `open` and `render` may commit and synchronize generated views.
-Never substitute source-file scanning for these views, and never hide a
-Capability Memory exit `3` behind a hand-written summary.
+`inspect` 只读；`open` 和 `render` 可能提交并同步生成视图。不能用扫描源文件代替这些视图，也不能用自行总结掩盖能力库退出码 `3`。
 
-Decision views are recommendations only. Assess business-independent abstraction and positive net
-value, then obtain explicit human confirmation for every specific reuse or adaptation before acting.
-Library membership, verification, or a previous approval never authorizes another use.
+决策视图只是建议。先评估业务无关的抽象和正向净收益，每次具体复用或适配前取得人工确认。入库、验证通过或过去获批都不代表本次获授权。
 
-Decision views use the same contract gate as `begin-design`: a declared exact contract is a reuse candidate,
-a declared partial contract requires adaptation, and a zero-fit candidate is rejected even when its
-semantic similarity or reuse score places it first. With no declared contract terms, verified,
-positive-value candidates remain eligible under the other gates. Runtime, platform, license, stack,
-category, current verification, source availability, and lifecycle are evaluated by that same
-decision engine; the Explorer never upgrades a workflow rejection to Reuse.
+决策视图与 `begin-design` 使用同一契约门禁：已声明契约完全匹配时可建议复用，部分匹配需要适配，零匹配即使排名第一也要拒绝。未声明契约时，经过验证且收益为正的能力仍须通过其他条件。运行环境、平台、许可证、技术栈、分类、当前验证、来源可用性和生命周期都由同一决策引擎判断；浏览视图不能将工作流拒绝的结果提升为复用建议。
 
-Every mandatory contract clause must be covered, including text following a recognized version
-range. Metadata dimensions are checked together. Related candidates need successful, current
-relationship evidence and the same eligibility proof as direct matches. Safe absolute paths and
-canonical `file:` URIs share availability checks.
+每条强制契约都必须覆盖，包括识别到版本范围之后的其他要求。元数据维度同时检查。关联候选必须具备当前有效的成功关系证据，并通过与直接命中相同的资格证明。安全绝对路径和规范 `file:` 地址共用可用性检查。
 
-Capability Memory remains mandatory before recurring-module design. Authority changes permit up to
-three consistency restarts independently of the one retrieval repair and complete hybrid retry.
-Activation evaluates the real semantic and hybrid routes and records measured thresholds in the
-generation manifest. Secrets are sanitized before embeddings, identities, history, and diagnostics.
+设计可能复用的模块前必须检查能力库。权威记录变化允许最多三次一致性重试，与一次检索修复及完整重试独立计数。索引启用前评测真实语义和混合检索，并在清单中记录阈值与测量值。敏感信息在向量化、标识生成、历史存储和诊断前脱敏。
 
-Demand history preserves the serialized event types `unmet_observed` and `implementation_linked`.
-Each observation requires its creation event; each linked observation requires a link event naming
-the same capability. Missing v2 demand tables or events is `authoritative_store_corrupt`, never an
-empty-library result. A valid journal can restore proven history; migration cannot invent it.
+需求历史保留序列化事件类型 `unmet_observed` 和 `implementation_linked`。每项观察必须有创建事件，每项已关联观察必须有指向同一能力的关联事件。第二版结构缺少需求表或事件时报告 `authoritative_store_corrupt`，不能视为空库。有效日志可恢复已知历史，迁移不能凭空创造历史。
 
-## Use Superpowers when applicable
+## 适用时使用 Superpowers
 
-Superpowers is an optional capability provider. When installed, skills such as
-`superpowers:brainstorming`, `superpowers:writing-plans`, `superpowers:systematic-debugging`,
-`superpowers:executing-plans`, `superpowers:requesting-code-review`, and
-`superpowers:verification-before-completion` may satisfy the needs above. Their availability does not
-make Superpowers a prerequisite, a fixed workflow, or Supermind's execution runtime.
+Superpowers 是可选能力来源。安装后，`superpowers:brainstorming`、`superpowers:writing-plans`、`superpowers:systematic-debugging`、`superpowers:executing-plans`、`superpowers:requesting-code-review`、`superpowers:verification-before-completion` 等技能可以满足相应需要。它们不是 Supermind 的前提、固定流程或运行基础。
 
-## Skip unnecessary routing
+## 避免不必要的调用
 
-Work directly when the outcome, affected behavior, and implementation path are already clear and the
-change is local. Examples include a precise copy change, an established configuration adjustment, or
-a small addition inside an existing feature contract.
+目标、影响范围和实现方式明确，且改动局部时，直接处理。例如准确的文案修改、已有配置调整或既有功能契约内的小改动。
 
-Do not use brainstorming merely because work is new, visible, or called a feature. Technical
-uncertainty calls for inspection, planning, or debugging; it is not automatically a product decision.
+不能只因为工作是新的、用户可见或被称为功能，就启动需求讨论。技术不确定性需要检查、规划或调试，不自动构成产品选择。
 
-## Return control to Supermind
+## 回到产品目标
 
-After every specialized task, reassess the product outcome. Absorb relevant results into product
-state, decide whether more work is needed, and route again only when a new trigger appears.
+每次专业任务结束后，重新评估产品结果，将相关认知纳入产品状态，判断是否还需继续。只有出现新的适用条件时才再次调用其他能力。

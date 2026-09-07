@@ -1,27 +1,18 @@
-# Product state
+# 产品状态
 
-Product state is the smallest durable description needed to evolve the product coherently.
+产品状态是支持产品持续、连贯演进所需的最小长期记录。
 
-- **Baseline**: What the product currently promises and demonstrably does.
-- **Scenario**: A user's context, intent, actions, and observable result.
-- **Feature**: A coherent user-visible capability that may participate in several scenarios.
-- **Behavior contract**: Inputs, rules, outputs, boundaries, and visible failure behavior.
-- **Capability**: A reusable implementation or service with a stable contract, owner, version, and
-  known consumers.
-- **Evidence**: Observable results that support a claimed product behavior or quality.
+- **基线**：产品当前承诺什么，以及已经证明能做到什么。
+- **场景**：用户所处情境、意图、操作和可观察结果。
+- **功能**：完整的用户可见能力，可以参与多个场景。
+- **行为契约**：输入、规则、输出、边界和用户可见的失败行为。
+- **能力**：具备稳定契约、责任人、版本和已知使用方的可复用实现或服务。
+- **证据**：支持某项产品行为或质量声明的可观察结果。
 
-For a new product, establish one valuable end-to-end scenario as the initial spine. This does not
-make every later change an end-to-end redesign.
+新产品先建立一个有价值的完整使用场景作为主线；不意味着后续每次改动都要重新设计整个产品。
 
-For existing products, locate the affected state first. Update only the scenarios, features,
-contracts, capabilities, and evidence changed by the work. A local implementation change may require
-no durable product-document update.
+已有产品先定位受影响的状态，只更新本次涉及的场景、功能、契约、能力和证据。局部实现调整不一定需要修改长期产品文档。
 
-Prefer existing repository locations and formats. When no durable product documentation exists and
-the new understanding will be needed by later work, use concise files under `docs/product/`, such as
-`baseline.md`, `features/<name>.md`, or `capabilities/<name>.md`. Create only the files the product
-actually needs.
+优先沿用仓库现有目录和格式。如果还没有长期产品文档，而新认知会被后续工作需要，可在 `docs/product/` 下建立简洁记录，例如 `baseline.md`、`features/<name>.md` 或 `capabilities/<name>.md`。只创建产品实际需要的文件。
 
-Keep design and implementation plans with the task method that created them. Promote their product
-decisions into product state; do not copy the whole task record.
-
+设计与实现计划保留在产生它们的任务方法中。将其中的产品决策提炼为产品状态，不复制整段任务记录。
