@@ -1,0 +1,4 @@
+interface:
+  display_name: "按风险与证据决定验证"
+  short_description: "选择合适的测试与审查范围，复用有效证据，减少重复验证并明确停止条件"
+  default_prompt: "使用 $proportionate-verification 判断本次改动需要哪些验证、哪些已有证据可以复用，以及何时可以交付。"

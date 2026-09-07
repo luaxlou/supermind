@@ -1,6 +1,6 @@
 {
   "name": "supermind",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "基于 Codex 的 AI 时代软件开发协作：以生命周期理解情境，按需组织能力，放大人与 AI 的价值。",
   "author": {
     "name": "Supermind 贡献者"
@@ -30,7 +30,8 @@
       "有证据的决策",
       "能力库浏览",
       "私有仓库增量同步",
-      "按需组织开发工作"
+      "按需组织开发工作",
+      "按风险与证据决定验证"
     ],
     "defaultPrompt": [
       "用 Supermind 把这个产品想法实现出来。",

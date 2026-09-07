@@ -27,6 +27,7 @@ if ! "$validator_python" -c 'import yaml' 2>/dev/null; then
 fi
 
 "${validator[@]}" "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" "$skill_root"
+"${validator[@]}" "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" "$plugin_root/skills/proportionate-verification"
 "${validator[@]}" "${CODEX_HOME:-$HOME/.codex}/skills/.system/plugin-creator/scripts/validate_plugin.py" "$plugin_root"
 
 expected_files='.agents/plugins/marketplace.json
@@ -115,6 +116,8 @@ docs/usage.md
 plugins/supermind/.codex-plugin/plugin.json
 plugins/supermind/scripts/bootstrap.py
 plugins/supermind/scripts/capability-memory
+plugins/supermind/skills/proportionate-verification/SKILL.md
+plugins/supermind/skills/proportionate-verification/agents/openai.yaml
 plugins/supermind/skills/supermind/SKILL.md
 plugins/supermind/skills/supermind/agents/openai.yaml
 plugins/supermind/skills/supermind/references/actions.md
