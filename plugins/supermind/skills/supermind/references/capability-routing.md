@@ -1,6 +1,6 @@
 # 能力调用指引
 
-设计阶段的需求基线与 UI 基线按[持续语境](design-stage.md)在进入阶段时加载一次，阶段内沿用；这属于阶段语境加载，不是每个设计动作重新检索或选型。具体技术能力的选择继续遵守下述检索规则。
+需求、UI 与基线管理方法按[具体场景](baseline-context.md)取得缺失语境，已有有效正文与依据持续沿用。生命周期用于理解背景，场景决定调用时点；不因“进入设计阶段”一律加载固定组合。具体技术能力的选择继续遵守下述检索规则。
 
 本文件落实[核心决策](core-decision.md)已经选择的动作。[场景指引](scenarios.md)决定进入条件和检索时点；本文件决定怎样调用现有能力及处理结果。先识别场景，再调用能力。
 
@@ -14,7 +14,7 @@
 - 完成的仓库工作需要交付或发布时，使用集成与交付方法。
 - 涉及专门领域时，使用命中其适用条件的领域技能与工具。
 
-能力可以来自 Codex、Superpowers、其他插件或项目本身。优先选择最贴合需要的能力，选定后遵守其说明。
+能力可以来自当前宿主、获准使用的插件或项目本身。选择前先应用用户与项目的禁用、排除和工程约束；已禁用能力不得通过另一能力的依赖、别名或间接调用重新启用。通用方法不应把可选供应方固化为运行前提。优先选择最贴合需要且被允许的能力，选定后遵守其说明。
 
 ## 能力库浏览
 
@@ -43,7 +43,7 @@
 
 ## 适用时使用 Superpowers
 
-Superpowers 是可选能力来源。安装后，`superpowers:brainstorming`、`superpowers:writing-plans`、`superpowers:systematic-debugging`、`superpowers:executing-plans`、`superpowers:requesting-code-review`、`superpowers:verification-before-completion` 等技能可以满足相应需要。它们不是 Supermind 的前提、固定流程或运行基础。
+只有用户及项目允许时，Superpowers 才能作为可选能力来源；安装并不代表获准使用。禁用时不调用、不推荐恢复，也不将其缺失作为通用方法的阻断条件。允许使用时，`superpowers:brainstorming`、`superpowers:writing-plans`、`superpowers:systematic-debugging`、`superpowers:executing-plans`、`superpowers:requesting-code-review`、`superpowers:verification-before-completion` 等技能可以满足相应需要。它们不是 Supermind 的前提、固定流程或运行基础。
 
 例如，讨论“这个功能是否值得做”不等于已经授权方案设计。先围绕价值与证据交流；若需要完整设计且所选方法适用，再调用相应技能。已进入某个方法后，新的用户要求改变了工作范围，应重新判断其适用性，而不是要求用户继续完成过时流程。仍在适用范围内的技能要求必须遵守，不能借灵活性跳过安全、验证或授权。
 

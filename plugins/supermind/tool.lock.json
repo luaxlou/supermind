@@ -1,6 +1,6 @@
 {
-  "version": "0.3.15",
-  "artifact": "supermind_capability_memory-0.3.15-py3-none-any.whl",
-  "sha256": "5834280e4a7a10e0dcddbc1dcf7ba51698d7c5ac4f1c1e3793788cc10bc234ee",
+  "version": "0.3.16",
+  "artifact": "supermind_capability_memory-0.3.16-py3-none-any.whl",
+  "sha256": "7aa810dd721359bb39eade9b78c7090808ed7c8dbe01093f720ad0fa70efa865",
   "protocol": ">=1,<2"
 }

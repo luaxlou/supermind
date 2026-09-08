@@ -21,7 +21,7 @@ from supermind_memory.replay import ReplayResult
 from supermind_memory.taxonomy import TOP_LEVEL_CATEGORIES
 from supermind_memory.types import AbstractionStatus, Capability, Evidence, Lifecycle, Relationship
 
-RENDERER_VERSION = "13"
+RENDERER_VERSION = "14"
 MANIFEST_PATH = PurePosixPath(".supermind/render-manifest.json")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 CATEGORIES = {
@@ -275,7 +275,7 @@ def _capability_page(item: Capability, evidence: tuple[Evidence, ...], relations
     dependencies = tuple(x.target_id for x in related if x.source_id == item.id and x.relationship_type.casefold() in dependency_types)
     body = _contract_body(item.contract)
     lines = [f"# {escape_markdown(item.name)}", "", escape_markdown(item.summary), ""]
-    if item.source_uri.startswith(("https://", "http://")):
+    if item.source_uri.startswith(("https://", "http://")) and not _is_document_self_link(item):
         lines += [_source_description(item), ""]
     if body:
         if not re.search(r"^## ", body, re.MULTILINE):
@@ -366,7 +366,7 @@ def _read_valid_manifest(root: Path) -> RenderManifest | None:
         return None
     try:
         manifest = _manifest_from_bytes(path.read_bytes())
-        return manifest if (manifest.renderer_version in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", RENDERER_VERSION}
+        return manifest if (manifest.renderer_version in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", RENDERER_VERSION}
                             and _manifest_files_match(root, manifest)) else None
     except (OSError, RenderBlocked):
         return None
@@ -438,12 +438,24 @@ def _html_text(value: str) -> str:
     return text
 
 
+def _is_document_self_link(item: Capability) -> bool:
+    """Shared document assets are already open; retain actual external sources."""
+    if item.artifact_type.value not in {"method", "template"}:
+        return False
+    source = urlsplit(item.source_uri)
+    path = unquote(source.path).rstrip("/")
+    # Generated method/template sources use the same stable capability document path.
+    return (source.hostname in {"github.com", "raw.githubusercontent.com"}
+            and path.endswith("/" + unquote(_capability_path(item.id).as_posix()))
+            and ("/blob/" in path or source.hostname == "raw.githubusercontent.com"))
+
+
 def _source_description(item: Capability) -> str:
     kind = {"code": "代码实现", "service": "服务实现", "api": "接口能力"}.get(item.artifact_type.value, "受控能力来源")
     source = urlsplit(item.source_uri)
     if source.scheme in {"https", "http"} and source.hostname and not source.username and not source.password:
         url = quote(item.source_uri, safe=":/?=&%#-._~")
-        label = "模板文档" if item.artifact_type.value == "template" else "官方项目"
+        label = {"template": "模板文档", "method": "方法文档"}.get(item.artifact_type.value, "官方项目")
         return f"[{label}]({url})"
     return f"{kind}（{escape_markdown(item.owner)}）"
 

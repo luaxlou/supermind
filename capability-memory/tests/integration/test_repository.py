@@ -96,7 +96,9 @@ def discovered_event(capability_id: str) -> Event:
     )
 
 
-def test_repository_round_trips_capability_and_audit_records(tmp_path, capability, vector):
+@pytest.mark.parametrize("artifact_type", [ArtifactType.CODE, ArtifactType.METHOD])
+def test_repository_round_trips_capability_and_audit_records(tmp_path, capability, vector, artifact_type):
+    capability = replace(capability, artifact_type=artifact_type)
     repo = CapabilityRepository.open(tmp_path / "memory.lance")
     repo.initialize()
     repo.upsert_capability(capability, vector)

@@ -421,7 +421,8 @@ def test_all_mutating_commands_decode_typed_inputs(tmp_path):
     ]
 
 
-def test_workflow_commands_decode_inputs_and_apply_mandatory_hooks(tmp_path):
+@pytest.mark.parametrize("artifact_type", ["code", "method"])
+def test_workflow_commands_decode_inputs_and_apply_mandatory_hooks(tmp_path, artifact_type):
     project = tmp_path / "project"
     project.mkdir()
     requirement = write_json(
@@ -433,7 +434,7 @@ def test_workflow_commands_decode_inputs_and_apply_mandatory_hooks(tmp_path):
         tmp_path,
         "workflow-implementation.json",
         {
-            "capability": capability_json(),
+            "capability": {**capability_json(), "artifact_type": artifact_type},
             "inputs": {
                 "expected_reuse_count": 3,
                 "benefit_per_reuse": 5,
@@ -505,6 +506,7 @@ def test_workflow_commands_decode_inputs_and_apply_mandatory_hooks(tmp_path):
         "search",
     ]
     assert json.loads(implementation_stdout)["id"] == capability().id
+    assert json.loads(implementation_stdout)["artifact_type"] == artifact_type
     assert [name for name, _ in implementation_memory.calls] == ["evaluate", "register"]
     assert json.loads(reuse_stdout)["lifecycle"] == "recommended"
     assert [name for name, _ in reuse_memory.calls] == ["record-use"]
