@@ -120,7 +120,7 @@ def test_domain_dataclasses_are_frozen_and_keep_their_declared_fields():
         ReuseScoreInputs: ("contract_fit", "requirement_fit", "reliability", "historical_benefit", "integration_cost", "maintenance_risk"),
         InspectFilter: ("category", "lifecycle", "stack", "capability_id"),
         DiscoveryContext: ("project_root", "codex_home"),
-        DiscoveryResult: ("capabilities", "sources_scanned"),
+        DiscoveryResult: ("capabilities", "sources_scanned", "local_only"),
         EvaluationResult: ("capability", "expected_net_value", "accepted", "reasons"),
         ReuseResult: ("capability_id", "project", "succeeded", "integration_effort", "benefit", "failure_reason"),
         ReuseDecision: ("requirement", "search_result", "action", "selected_capability_id", "rationale", "human_confirmation_required", "abstraction_review_required", "execution_authorized"),
