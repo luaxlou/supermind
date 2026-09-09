@@ -33,7 +33,6 @@ fi
 expected_files='.agents/plugins/marketplace.json
 .gitignore
 README.md
-docs/examples/nova-cli-capability.md
 capability-memory/evaluation/retrieval-v1.json
 capability-memory/model.lock.json
 capability-memory/pyproject.toml
@@ -55,10 +54,10 @@ capability-memory/src/supermind_memory/git_client.py
 capability-memory/src/supermind_memory/health.py
 capability-memory/src/supermind_memory/lifecycle.py
 capability-memory/src/supermind_memory/migration.py
+capability-memory/src/supermind_memory/privacy.py
 capability-memory/src/supermind_memory/projection.py
 capability-memory/src/supermind_memory/protocol.py
 capability-memory/src/supermind_memory/purge.py
-capability-memory/src/supermind_memory/privacy.py
 capability-memory/src/supermind_memory/quality.py
 capability-memory/src/supermind_memory/redaction.py
 capability-memory/src/supermind_memory/renderer.py
@@ -95,8 +94,8 @@ capability-memory/tests/integration/test_sync.py
 capability-memory/tests/unit/test_event_model.py
 capability-memory/tests/unit/test_event_store.py
 capability-memory/tests/unit/test_git_client.py
-capability-memory/tests/unit/test_purge.py
 capability-memory/tests/unit/test_privacy.py
+capability-memory/tests/unit/test_purge.py
 capability-memory/tests/unit/test_quality.py
 capability-memory/tests/unit/test_redaction.py
 capability-memory/tests/unit/test_renderer.py
@@ -104,20 +103,33 @@ capability-memory/tests/unit/test_replay.py
 capability-memory/tests/unit/test_taxonomy_scoring.py
 capability-memory/tests/unit/test_types_config.py
 capability-memory/uv.lock
+docs/engineering/authority-access.md
+docs/archive/requirements-and-design/README.md
+docs/archive/requirements-and-design/requirements-baseline.md
+docs/archive/requirements-and-design/wireframe-design-baseline.md
+docs/archive/requirements-and-design/enterprise-process-map.md
+docs/archive/requirements-and-design/enterprise-process-map-review.md
+docs/archive/requirements-and-design/baseline-management.md
+docs/archive/requirements-and-design/baseline-management-review.md
+docs/archive/requirements-and-design/baseline-context.md
+docs/engineering/iteration.md
+docs/engineering/iteration-review.md
+docs/examples/nova-cli-capability.md
 docs/product/2026-09-04-capability-memory-design.md
 docs/product/2026-09-06-capability-memory-hardening-design.md
 docs/product/2026-09-06-distributed-capability-memory-design.md
 docs/product/2026-09-07-core-decision-mechanism-design.md
-docs/product/capability-memory-purge.md
 docs/product/2026-09-07-reuse-meta-capability-review.md
-docs/engineering/wireframe-design-baseline.md
-docs/engineering/requirements-baseline.md
+docs/product/2026-09-08-project-agent-direction.md
+docs/product/2026-09-08-project-agent-v1-design.md
 docs/product/capability-memory-bootstrap.md
+docs/product/capability-memory-purge.md
 docs/product/green-planet-login-boundary.md
-docs/product/supermind-decision-model.md
 docs/product/plans/2026-09-04-capability-memory.md
 docs/product/plans/2026-09-06-capability-memory-hardening.md
+docs/product/supermind-decision-model.md
 docs/superpowers/plans/2026-09-06-distributed-capability-memory.md
+docs/superpowers/plans/2026-09-08-authority-access.md
 docs/usage.md
 plugins/supermind/.codex-plugin/plugin.json
 plugins/supermind/scripts/bootstrap.py
@@ -126,19 +138,21 @@ plugins/supermind/skills/proportionate-verification/SKILL.md
 plugins/supermind/skills/proportionate-verification/agents/openai.yaml
 plugins/supermind/skills/supermind/SKILL.md
 plugins/supermind/skills/supermind/agents/openai.yaml
-plugins/supermind/skills/supermind/references/actions.md
 plugins/supermind/skills/supermind/references/abstraction-review.md
+plugins/supermind/skills/supermind/references/actions.md
+plugins/supermind/skills/supermind/references/implementation-input.md
 plugins/supermind/skills/supermind/references/capability-routing.md
 plugins/supermind/skills/supermind/references/core-decision.md
-plugins/supermind/skills/supermind/references/design-stage.md
-plugins/supermind/skills/supermind/references/scenarios.md
 plugins/supermind/skills/supermind/references/product-state.md
+plugins/supermind/skills/supermind/references/scenarios.md
 plugins/supermind/tests/test_launcher.py
 plugins/supermind/tool.lock.json
-plugins/supermind/vendor/supermind_capability_memory-0.3.7-py3-none-any.whl
 plugins/supermind/vendor/supermind_capability_memory-0.3.12-py3-none-any.whl
 plugins/supermind/vendor/supermind_capability_memory-0.3.13-py3-none-any.whl
 plugins/supermind/vendor/supermind_capability_memory-0.3.15-py3-none-any.whl
+plugins/supermind/vendor/supermind_capability_memory-0.3.16-py3-none-any.whl
+plugins/supermind/vendor/supermind_capability_memory-0.3.17-py3-none-any.whl
+plugins/supermind/vendor/supermind_capability_memory-0.3.7-py3-none-any.whl
 scripts/verify-distribution.py
 scripts/verify.sh'
 
@@ -189,10 +203,12 @@ fi
 # These disjoint partitions cover the complete suite once. Each process owns its
 # native database runtime; service/e2e work can run alongside storage integrations.
 if [[ "$run_tests" == 1 ]]; then
-uv run --project "$memory_root" pytest "$memory_root/tests/integration" \
+# Sync once before parallel test processes share the same environment.
+uv sync --frozen --project "$memory_root"
+uv run --no-sync --project "$memory_root" pytest "$memory_root/tests/integration" \
   --ignore="$memory_root/tests/integration/test_service.py" -q &
 integration_pid=$!
-uv run --project "$memory_root" pytest "$memory_root/tests/unit" \
+uv run --no-sync --project "$memory_root" pytest "$memory_root/tests/unit" \
   "$memory_root/tests/e2e" "$memory_root/tests/integration/test_service.py" \
   "$plugin_root/tests" -q &
 behavior_pid=$!

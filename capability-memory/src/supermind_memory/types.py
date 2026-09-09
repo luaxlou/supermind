@@ -26,6 +26,7 @@ class Lifecycle(str, Enum):
 
 class ArtifactType(str, Enum):
     CODE = "code"
+    METHOD = "method"
     TEMPLATE = "template"
     SKILL = "skill"
     PLUGIN = "plugin"

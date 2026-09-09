@@ -1,43 +1,40 @@
 {
   "name": "supermind",
-  "version": "0.6.5",
-  "description": "基于生命周期与具体场景作出软件开发决策，明确触发能力检索，并依据执行反馈组织人机协作。",
+  "version": "0.7.0",
+  "description": "Codex 平台下的工程执行能力，承接已明确的需求与设计，完成实现、验证、交付、运维和能力复用。",
   "author": {
     "name": "Supermind 贡献者"
   },
   "homepage": "https://github.com/luaxlou/supermind",
   "repository": "https://github.com/luaxlou/supermind",
   "keywords": [
-    "product-development",
-    "orchestration",
+    "engineering",
+    "execution",
     "capability-memory",
     "reuse",
-    "codex",
-    "agent"
+    "codex"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Supermind",
-    "shortDescription": "以生命周期与场景驱动软件开发决策",
-    "longDescription": "基于 Codex 实践 AI 时代的软件开发哲学。核心决策机制结合用户意图、项目上下文、生命周期和具体场景，选择下一步动作，并依据执行反馈继续或结束。场景规定能力检索的条件和时点；AI 主动读取材料和完成授权工作，用户参与价值与关键取舍。能力库由独立本地工具管理并同步至 GitHub 私有仓库。",
+    "shortDescription": "承接明确的需求与设计，在 Codex 中完成工程交付",
+    "longDescription": "Supermind 为 Codex 补充工程实践、能力复用与持续记忆。需求分析与设计由用户在 ChatGPT 或其他上游协作中完成；Supermind 承接明确成果，完成实施计划、编码、调试、验证、发布和运行维护，依据真实结果持续改进。",
     "developerName": "Supermind 贡献者",
     "category": "Developer Tools",
     "capabilities": [
-      "生命周期与具体场景识别",
-      "核心决策与执行反馈",
-      "场景驱动的能力检索",
-      "复用评估与候选发现",
-      "人工确认的能力复用",
-      "有证据的决策",
+      "承接上游需求与设计成果",
+      "工程实施与调试",
+      "按需验证与审查",
+      "交付与运行维护",
+      "持续承接工程状态",
+      "工程能力检索与复用",
       "能力库浏览",
-      "私有仓库增量同步",
-      "按需组织开发工作",
-      "按风险与证据决定验证"
+      "私有仓库增量同步"
     ],
     "defaultPrompt": [
-      "用 Supermind 把这个产品想法实现出来。",
-      "用 Supermind 增加这个功能。",
-      "用 Supermind 改进这个产品。",
+      "用 Supermind 按已确认的需求和设计完成实现。",
+      "用 Supermind 修复这个已有功能的缺陷。",
+      "用 Supermind 按现有部署方式发布这个版本。",
       "用 Supermind 查看能力库。"
     ]
   }

@@ -1,7 +1,7 @@
 interface:
   display_name: "Supermind"
-  short_description: "基于软件生命周期理解当前情境，按需组织能力，放大人与 AI 的协作价值"
-  default_prompt: "用 $supermind 结合这个软件项目的当前情况，帮助我推进接下来的工作。"
+  short_description: "Codex 工程执行能力，承接明确需求与设计，完成实现、验证和交付"
+  default_prompt: "用 $supermind 按已确认的需求和设计完成工程实现与交付。"
 
 policy:
   allow_implicit_invocation: true

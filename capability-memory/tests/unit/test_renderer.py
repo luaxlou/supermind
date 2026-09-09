@@ -223,3 +223,16 @@ def test_template_source_is_named_as_document_not_official_project():
     detail = render_files(replay((_event(item, "template-source"),)))[PurePosixPath("capabilities/method.md")].decode()
     assert "[模板文档](https://example.org/method.md)" in detail
     assert "[官方项目]" not in detail
+
+
+def test_method_event_renders_design_catalog_and_complete_adoption_body():
+    body = "## 采用步骤\n\n1. 提供线框与组件库。\n2. 实现可运行页面。\n\n## 边界\n\n流程未明确时先澄清；效率反馈尚未量化。"
+    item = replace(_capability("design-method", "组件库直出原型", Lifecycle.CANDIDATE),
+                   artifact_type=ArtifactType.METHOD, category_path=("design",),
+                   source_uri="https://example.org/design-method.md", contract=body, constraints=())
+    files = render_files(replay((_event(item, "method-source"),)))
+    detail = files[PurePosixPath("capabilities/design-method.md")].decode()
+    assert body in detail
+    assert "[方法文档](https://example.org/design-method.md)" in detail
+    assert "[官方项目]" not in detail
+    assert "design-method.md" in files[PurePosixPath("catalog/design.md")].decode()
