@@ -1,0 +1,20 @@
+schema: spec-driven
+context: |
+  Language: Chinese. Keep OpenSpec structural headings and SHALL/MUST keywords in English.
+  Supermind 是 Codex 平台下的工程执行插件；独立 Python CLI capability-memory 提供能力库。
+  读取 AGENTS.md、openspec/README.md、README.md 和 docs/product/supermind-decision-model.md。
+  需求分析和设计由上游明确，承接既有决定；不借 explore/propose 扩大范围。
+  OpenSpec 是工程管理必备依赖，规格、变更、任务和归档留在项目仓库。
+  Memory 不承担基线管理或迭代，不调用 engineering.baseline-management 和 engineering.iteration。
+  每个变更只在其 tasks.md 维护进度。历史计划保留来源价值，不能当作现行任务或已完成证据。
+  保留已有未提交改动。插件版本、独立 CLI 版本及发布状态分别核对，不将源码更新当作安装生效。
+  纯文档和集成配置使用 scripts/verify.sh --structure-only；运行行为变化按受影响范围执行必要验证。
+rules:
+  proposal:
+    - 引用用户已明确的目标及有效正文，说明范围和排除项，不重新开展需求分析。
+  specs:
+    - 只纳入明确约束；以场景表述可观察结果，区分规格约束和实现证据。
+  design:
+    - 引用上游已确认方案，记录必要工程接入决定；实质设计缺口交回上游。
+  tasks:
+    - 任务完成必须有相应证据；Git 提交、发布、安装、运行验证分别表述。

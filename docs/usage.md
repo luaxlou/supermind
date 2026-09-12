@@ -18,6 +18,16 @@ Supermind 是 Codex 平台下的工程执行能力，承接已明确的需求与
 
 任务可以只交付工程解释、调查结果或实施计划。纯需求与设计请求不进入工程流程。一般解释、局部修改不要求先初始化能力库。工程能力从真实使用和反馈中积累，用户明确无需验证时不额外安排测试或审查。
 
+## 直接使用 OpenSpec
+
+OpenSpec 是 Supermind 工程管理的必备依赖，使用官方 CLI 及其生成的 Codex skills 承接规格、变更、任务和归档。Memory 不再提供基线管理或迭代方法，不调用 `engineering.baseline-management` 和 `engineering.iteration`，也不重新登记同义能力。
+
+规格与变更管理由官方 OpenSpec CLI 承担。可以直接说：“用 Supermind 通过 OpenSpec 承接这份已确认规格并推进变更。”Supermind 检查工具和现有项目，读取官方生成的 Codex skills 及 CLI instructions，在授权范围内完成产物、实施和归档。
+
+工具安装使用官方包 `@fission-ai/openspec`；本次接入核对版本为 1.13.0，Node.js 要求 >=20.19.0。项目采用其他版本时读取对应帮助与指令，不强制升级。具体行为和旧项目接入边界见 [OpenSpec 接入指引](../plugins/supermind/skills/supermind/references/openspec.md)。
+
+现有项目的唯一进度入口先保留；新变更采用 OpenSpec 原生任务时，不再另建 Supermind 计划。安装工具不会自动迁移其他项目的基线，也不会把尚未实现的目标写为当前能力。官方格式校验、功能验证和发布状态分别记录。
+
 ## 能力库如何工作
 
 `begin-design` 保留为现有 CLI 的兼容命令名，Supermind 仅将它用于工程实施中的来源发现和能力检索，不启动设计流程。检索请求中的需求字段描述已明确的工程用途，不代表需求分析能力。

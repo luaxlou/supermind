@@ -1,6 +1,6 @@
 # Supermind
 
-Supermind 是 **Codex 平台下的工程执行能力**。承接用户在 ChatGPT 或其他上游协作中明确的需求与设计，通过工程实践、能力复用和持续记忆，将方案落实为可交付、可运行的软件。
+Supermind 是 **Codex 平台下的工程执行能力**。承接用户在 ChatGPT 或其他上游协作中明确的需求与设计，通过工程实践、能力复用和持续记忆，将方案落实为可交付、可运行的软件。**工程管理以 OpenSpec 为必备依赖，工程能力积累由 Supermind Memory 承担。**
 
 ## 工作分工
 
@@ -24,13 +24,49 @@ Supermind 是 **Codex 平台下的工程执行能力**。承接用户在 ChatGPT
 ```mermaid
 flowchart LR
     U[用户与 ChatGPT：需求分析和设计] --> I[明确的需求、设计和验收依据]
-    I --> E[Codex + Supermind：工程执行]
+    I --> O[OpenSpec：规格、变更与任务]
+    O --> E[Codex + Supermind：工程执行]
     E --> R[实现、验证、交付与运行结果]
     E --> Q[上游缺口与工程事实]
     Q --> U
 ```
 
 图中表示工作交接，不代表已实现 ChatGPT 与 Codex 的自动同步。用户可以提供项目文档、已有契约或明确指令，不限定上游工具。
+
+## OpenSpec 集成
+
+[OpenSpec](https://github.com/Fission-AI/OpenSpec) 是 Supermind 的**工程管理必备依赖**。Supermind 通过官方 CLI 和项目内生成的 Codex 技能使用 OpenSpec，将上游已明确的需求与设计接入规格、变更、实施任务和归档流程。
+
+| 组成 | 职责 |
+| --- | --- |
+| OpenSpec | 维护现行规格、组织变更、记录实施任务及归档已完成变更 |
+| Supermind | 读取规格与任务，执行编码、集成、调试、验证和交付 |
+| Supermind Memory | 保存和复用工程能力、实践经验及验证证据；基线管理与迭代方法已退出 |
+
+需求、UX、UI 的有效正文继续作为上游依据，由 OpenSpec 规格和变更引用。每个变更只在其 `tasks.md` 中维护进度，Memory 不保存另一份项目进度，也不再管理三套基线生命周期。
+
+### 如何协同工作
+
+1. **承接成果**：读取上游确认的需求、设计与验收条件，以及项目现行规格。
+2. **组织变更**：通过 OpenSpec 记录本次变更范围、规格差异和实施任务。
+3. **执行与验证**：Supermind 按任务推进实现，依据实际结果更新进度；发现需求或设计缺口时交回上游。
+4. **同步与归档**：完成必要验证后，通过 OpenSpec 同步规格并归档变更。源码提交、发布和部署另按项目约定执行。
+
+可以直接向 Codex 提出：
+
+> 用 Supermind 通过 OpenSpec 承接这份已确认的需求与设计，组织变更并实施。
+
+> 用 Supermind 继续当前 OpenSpec 变更，读取已有任务和证据，完成剩余工作。
+
+### 接入项目
+
+OpenSpec 使用官方 CLI 和项目级 Codex 技能接入。安装 Supermind 插件后，仍需在目标项目中完成 OpenSpec 接入；已有 OpenSpec 项目沿用原配置和记录。具体步骤见 [OpenSpec 接入指引](plugins/supermind/skills/supermind/references/openspec.md)。
+
+Supermind 自身仓库也使用 OpenSpec 管理工程工作：
+
+- [工程管理入口](openspec/README.md)：现行规格、变更入口和常用命令。
+- [项目配置](openspec/config.yaml)：工程上下文及产物规则。
+- [Codex 技能](.agents/skills/openspec-apply-change/SKILL.md)：官方生成的实施入口。
 
 ## 安装或更新
 

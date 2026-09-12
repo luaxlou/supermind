@@ -14,6 +14,8 @@ skill_root="$plugin_root/skills/supermind"
 validator_python="${CODEX_PYTHON:-python3}"
 validator=("$validator_python")
 
+(cd "$project_root" && openspec validate --all --strict --no-interactive)
+
 "$validator_python" -m json.tool "$project_root/.agents/plugins/marketplace.json" >/dev/null
 "$validator_python" -m json.tool "$plugin_root/.codex-plugin/plugin.json" >/dev/null
 
@@ -30,7 +32,21 @@ fi
 "${validator[@]}" "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" "$plugin_root/skills/proportionate-verification"
 "${validator[@]}" "${CODEX_HOME:-$HOME/.codex}/skills/.system/plugin-creator/scripts/validate_plugin.py" "$plugin_root"
 
-expected_files='.agents/plugins/marketplace.json
+expected_files='.agents/skills/.openspec-target
+.agents/skills/openspec-apply-change/SKILL.md
+.agents/skills/openspec-archive-change/SKILL.md
+.agents/skills/openspec-explore/SKILL.md
+.agents/skills/openspec-propose/SKILL.md
+.agents/skills/openspec-sync-specs/SKILL.md
+.agents/skills/openspec-update-change/SKILL.md
+AGENTS.md
+openspec/README.md
+openspec/changes/archive/.gitkeep
+openspec/config.yaml
+openspec/specs/.gitkeep
+openspec/specs/engineering-execution/spec.md
+openspec/specs/engineering-management/spec.md
+.agents/plugins/marketplace.json
 .gitignore
 README.md
 capability-memory/evaluation/retrieval-v1.json
@@ -104,6 +120,8 @@ capability-memory/tests/unit/test_taxonomy_scoring.py
 capability-memory/tests/unit/test_types_config.py
 capability-memory/uv.lock
 docs/engineering/authority-access.md
+docs/archive/openspec-replaced/README.md
+docs/archive/openspec-replaced/baseline-management.md
 docs/archive/requirements-and-design/README.md
 docs/archive/requirements-and-design/requirements-baseline.md
 docs/archive/requirements-and-design/wireframe-design-baseline.md
@@ -112,8 +130,8 @@ docs/archive/requirements-and-design/enterprise-process-map-review.md
 docs/archive/requirements-and-design/baseline-management.md
 docs/archive/requirements-and-design/baseline-management-review.md
 docs/archive/requirements-and-design/baseline-context.md
-docs/engineering/iteration.md
-docs/engineering/iteration-review.md
+docs/archive/openspec-replaced/iteration.md
+docs/archive/openspec-replaced/iteration-review.md
 docs/examples/nova-cli-capability.md
 docs/product/2026-09-04-capability-memory-design.md
 docs/product/2026-09-06-capability-memory-hardening-design.md
@@ -144,6 +162,7 @@ plugins/supermind/skills/supermind/references/implementation-input.md
 plugins/supermind/skills/supermind/references/capability-routing.md
 plugins/supermind/skills/supermind/references/core-decision.md
 plugins/supermind/skills/supermind/references/product-state.md
+plugins/supermind/skills/supermind/references/openspec.md
 plugins/supermind/skills/supermind/references/scenarios.md
 plugins/supermind/tests/test_launcher.py
 plugins/supermind/tool.lock.json
@@ -230,9 +249,19 @@ if grep -RInE \
   --exclude-dir=__pycache__ \
   --exclude=.git \
   --exclude=verify.sh \
-  '(/Users/|/home/|[A-Za-z]:\\\\Users\\\\|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16}|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|\[TODO:|TBD)' \
+  '(/Users/|/home/|[A-Za-z]:\\\\Users\\\\|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16}|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY)' \
   "$project_root"; then
   echo "Private, secret-like, legacy, or unfinished content detected." >&2
+  exit 1
+fi
+
+# Official generated workflow instructions discuss placeholders as examples.
+# They remain covered by the sensitive-content scan above.
+if rg -n --hidden --glob '!.git/**' --glob '!.superpowers/**' \
+  --glob '!.worktrees/**' --glob '!**/.venv/**' --glob '!**/.pytest_cache/**' \
+  --glob '!**/__pycache__/**' --glob '!scripts/verify.sh' \
+  --glob '!.agents/skills/openspec-*/**' '\[TODO:|TBD' "$project_root"; then
+  echo "Unfinished project content detected." >&2
   exit 1
 fi
 
